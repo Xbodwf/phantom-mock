@@ -1,46 +1,49 @@
 # 构建阶段 - 前端
-FROM node:20-alpine AS frontend-builder
+FROM node:24-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
 # 复制前端依赖文件
-COPY frontend/package*.json ./
+COPY frontend/package.json frontend/yarn.lock* ./
 
 # 安装依赖
-RUN npm ci
+RUN corepack enable && yarn install --frozen-lockfile
 
 # 复制前端源代码
 COPY frontend/ ./
 
 # 构建前端
-RUN npm run build
+RUN yarn build
 
 # 构建阶段 - 后端
-FROM node:20-alpine AS backend-builder
+FROM node:24-alpine AS backend-builder
 
 WORKDIR /app
 
 # 复制后端依赖文件
-COPY package*.json ./
+COPY package.json yarn.lock* ./
 COPY tsconfig.json ./
 
 # 安装依赖
-RUN npm ci
+RUN corepack enable && yarn install --frozen-lockfile
 
 # 复制后端源代码
 COPY src/ ./src/
 
 # 构建后端
-RUN npm run build
+RUN yarn build
 
 # 生产阶段
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
+# 启用 corepack
+RUN corepack enable
+
 # 复制后端依赖
-COPY package*.json ./
-RUN npm ci --only=production
+COPY package.json yarn.lock* ./
+RUN yarn install --production --frozen-lockfile
 
 # 复制构建产物
 COPY --from=backend-builder /app/dist ./dist
