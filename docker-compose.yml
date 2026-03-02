@@ -12,4 +12,4 @@ services:
       - ./data:/app/data
     environment:
       - NODE_ENV=production
-      - PORT=3000
+      - PORT=7143

@@ -29,7 +29,7 @@ export interface Config {
 // 默认配置
 const defaultConfig: Config = {
   server: {
-    port: 3000,
+    port: 7143,
     host: '0.0.0.0',
   },
   settings: {

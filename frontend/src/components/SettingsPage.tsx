@@ -18,7 +18,7 @@ import { useServer } from '../contexts/ServerContext';
 export default function SettingsPage() {
   const { settings, updateSettings } = useServer();
   const [streamDelay, setStreamDelay] = useState(settings.streamDelay);
-  const [port, setPort] = useState(settings.port || 3000);
+  const [port, setPort] = useState(settings.port || 7143);
   const [saved, setSaved] = useState(false);
   
   const theme = useTheme();
@@ -26,7 +26,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setStreamDelay(settings.streamDelay);
-    setPort(settings.port || 3000);
+    setPort(settings.port || 7143);
   }, [settings.streamDelay, settings.port]);
 
   const handleSave = async () => {

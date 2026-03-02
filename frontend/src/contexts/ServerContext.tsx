@@ -32,7 +32,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   const [pendingRequests, setPendingRequests] = useState<Map<string, PendingRequest>>(new Map());
   const [models, setModels] = useState<Model[]>([]);
   const [stats, setStats] = useState<Stats>({ pendingRequests: 0, connectedClients: 0, totalModels: 0 });
-  const [settings, setSettings] = useState<SystemSettings>({ streamDelay: 500, port: 3000 });
+  const [settings, setSettings] = useState<SystemSettings>({ streamDelay: 500, port: 7143 });
 
   useEffect(() => {
     const connect = () => {
