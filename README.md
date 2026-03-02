@@ -35,7 +35,7 @@ docker run -d \
   --name fake-ai-server \
   -p 7143:7143 \
   -v $(pwd)/data:/app/data \
-  xbodwf/fake-ai-server:latest
+  xbodwf/fake-ai-server:v1.1
 ```
 
 ### 方式三：Docker 手动构建
