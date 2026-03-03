@@ -7,6 +7,7 @@ import Layout from './components/Layout';
 import RequestList from './components/RequestList';
 import ModelManager from './components/ModelManager';
 import SettingsPage from './components/SettingsPage';
+import ApiKeyManager from './components/ApiKeyManager';
 
 // Material Design 3 风格主题
 const darkTheme: Theme = createTheme({
@@ -126,6 +127,8 @@ function AppContent() {
         return <RequestList />;
       case 'models':
         return <ModelManager />;
+      case 'apikeys':
+        return <ApiKeyManager />;
       case 'settings':
         return <SettingsPage />;
       default:

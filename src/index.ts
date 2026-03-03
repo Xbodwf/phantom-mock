@@ -1,5 +1,5 @@
 import express, { Request, Response, Application } from 'express';
-import type { ChatCompletionRequest, PendingRequest, Model } from './types.js';
+import type { ChatCompletionRequest, PendingRequest, Model, Message, ApiKey } from './types.js';
 import { addPendingRequest, getPendingRequest, removePendingRequest, getPendingCount } from './requestStore.js';
 import { buildResponse, buildStreamChunk, buildStreamDone, generateRequestId } from './responseBuilder.js';
 import { broadcastRequest, initWebSocket, getConnectedClientsCount, broadcastModelsUpdate } from './websocket.js';
@@ -14,7 +14,25 @@ import {
   getServerConfig,
   getSettings,
   updateSettings,
+  loadApiKeys,
+  getAllApiKeys,
+  createApiKey,
+  updateApiKey,
+  deleteApiKey,
+  validateApiKey,
 } from './storage.js';
+
+// 辅助函数：获取消息内容的字符串表示
+function getContentString(content: Message['content']): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter(c => c.type === 'text' && c.text)
+      .map(c => c.text)
+      .join('\n');
+  }
+  return '';
+}
 
 const app: Application = express();
 const server = createServer(app);
@@ -33,6 +51,84 @@ app.use((req, res, next) => {
   next();
 });
 
+// ==================== API Key 认证中间件 ====================
+
+// 从请求中提取 API Key
+function extractApiKey(req: Request): string | null {
+  // 1. 从 Authorization header 获取 (Bearer token)
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    return authHeader.substring(7);
+  }
+  // 2. 从 x-api-key header 获取
+  const xApiKey = req.headers['x-api-key'];
+  if (typeof xApiKey === 'string') {
+    return xApiKey;
+  }
+  return null;
+}
+
+// API Key 认证中间件
+async function apiKeyAuthMiddleware(req: Request, res: Response, next: () => void) {
+  const settings = await getSettings();
+
+  // 如果全局不需要 API Key，直接放行
+  if (!settings.requireApiKey) {
+    return next();
+  }
+
+  // 获取请求中的模型
+  const modelId = req.body?.model || req.params?.modelId;
+  const model = modelId ? getModel(modelId) : null;
+
+  // 如果模型设置为不需要 API Key，放行
+  if (model && model.require_api_key === false) {
+    return next();
+  }
+
+  // 验证 API Key
+  const apiKey = extractApiKey(req);
+  if (!apiKey) {
+    return res.status(401).json({
+      error: {
+        message: 'API key is required. Please provide a valid API key in Authorization header or x-api-key header.',
+        type: 'authentication_error',
+        code: 'missing_api_key',
+      }
+    });
+  }
+
+  const validKey = await validateApiKey(apiKey);
+  if (!validKey) {
+    return res.status(401).json({
+      error: {
+        message: 'Invalid API key provided.',
+        type: 'authentication_error',
+        code: 'invalid_api_key',
+      }
+    });
+  }
+
+  // 检查权限
+  if (validKey.permissions) {
+    // 检查模型权限
+    if (validKey.permissions.models && validKey.permissions.models.length > 0) {
+      if (modelId && !validKey.permissions.models.includes(modelId)) {
+        return res.status(403).json({
+          error: {
+            message: `API key does not have permission to access model: ${modelId}`,
+            type: 'permission_error',
+            code: 'model_not_allowed',
+          }
+        });
+      }
+    }
+  }
+
+  // 验证通过
+  next();
+}
+
 // ==================== 管理 API ====================
 
 // GET /api/models - 获取模型列表（管理用）
@@ -42,7 +138,7 @@ app.get('/api/models', (req: Request, res: Response) => {
 
 // POST /api/models - 添加模型
 app.post('/api/models', async (req: Request, res: Response) => {
-  const { id, owned_by, description, context_length } = req.body;
+  const { id, owned_by, description, context_length, aliases, max_output_tokens, pricing, api_key, api_base_url, supported_features, require_api_key } = req.body;
 
   if (!id) {
     return res.status(400).json({ error: 'Model ID is required' });
@@ -58,6 +154,13 @@ app.post('/api/models', async (req: Request, res: Response) => {
       owned_by: owned_by || 'custom',
       description: description || '',
       context_length: context_length || 4096,
+      aliases,
+      max_output_tokens,
+      pricing,
+      api_key,
+      api_base_url,
+      supported_features,
+      require_api_key: require_api_key ?? true, // 默认需要 API Key
     });
     broadcastModelsUpdate(getAllModels());
     res.json({ success: true, model: newModel });
@@ -69,13 +172,28 @@ app.post('/api/models', async (req: Request, res: Response) => {
 // PUT /api/models/:id - 更新模型
 app.put('/api/models/:id', async (req: Request, res: Response) => {
   const id = req.params.id as string;
-  const { owned_by, description, context_length } = req.body;
+  const { newId, owned_by, description, context_length, aliases, max_output_tokens, pricing, api_key, api_base_url, supported_features, require_api_key } = req.body;
 
   try {
+    // 如果要修改ID，先检查新ID是否已存在
+    if (newId && newId !== id) {
+      if (getModel(newId)) {
+        return res.status(400).json({ error: 'Model with new ID already exists' });
+      }
+    }
+
     const updated = await storageUpdateModel(id, {
+      id: newId, // 支持修改ID
       owned_by,
       description,
       context_length,
+      aliases,
+      max_output_tokens,
+      pricing,
+      api_key,
+      api_base_url,
+      supported_features,
+      require_api_key,
     });
 
     if (!updated) {
@@ -129,19 +247,81 @@ app.get('/api/settings', async (req: Request, res: Response) => {
 app.put('/api/settings', async (req: Request, res: Response) => {
   try {
     const { port, ...settings } = req.body;
-    
+
     // 更新设置
     const updatedSettings = await updateSettings(settings);
-    
+
     // 如果包含端口配置，也更新服务器配置
     if (port !== undefined) {
       const { updateServerConfig } = await import('./storage.js');
       await updateServerConfig({ port });
     }
-    
+
     res.json({ success: true, settings: { ...updatedSettings, port } });
   } catch (e) {
     res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
+// ==================== API Key 管理 ====================
+
+// GET /api/keys - 获取所有 API Keys
+app.get('/api/keys', async (req: Request, res: Response) => {
+  try {
+    const keys = getAllApiKeys();
+    res.json({ keys });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to get API keys' });
+  }
+});
+
+// POST /api/keys - 创建新的 API Key
+app.post('/api/keys', async (req: Request, res: Response) => {
+  try {
+    const { name, permissions } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
+    const newKey = await createApiKey(name, permissions);
+    res.json({ success: true, key: newKey });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to create API key' });
+  }
+});
+
+// PUT /api/keys/:id - 更新 API Key
+app.put('/api/keys/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const { name, enabled, permissions } = req.body;
+
+    const updated = await updateApiKey(id, { name, enabled, permissions });
+
+    if (!updated) {
+      return res.status(404).json({ error: 'API key not found' });
+    }
+
+    res.json({ success: true, key: updated });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to update API key' });
+  }
+});
+
+// DELETE /api/keys/:id - 删除 API Key
+app.delete('/api/keys/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const deleted = await deleteApiKey(id);
+
+    if (!deleted) {
+      return res.status(404).json({ error: 'API key not found' });
+    }
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete API key' });
   }
 });
 
@@ -156,6 +336,9 @@ app.get('/api/server-config', async (req: Request, res: Response) => {
 });
 
 // ==================== OpenAI API 路由 ====================
+
+// 所有 /v1/* 路由应用 API Key 认证中间件
+app.use('/v1', apiKeyAuthMiddleware);
 
 // GET /v1/models - 获取模型列表
 app.get('/v1/models', (req: Request, res: Response) => {
@@ -215,7 +398,7 @@ app.post('/v1/chat/completions', async (req: Request, res: Response) => {
   console.log('----------------------------------------');
 
   body.messages.forEach((msg, i) => {
-    const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+    const content = getContentString(msg.content);
     console.log(`  [${i + 1}] ${msg.role}: ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`);
   });
   console.log('========================================\n');
@@ -282,7 +465,8 @@ app.post('/v1/responses', async (req: Request, res: Response) => {
   console.log('----------------------------------------');
 
   messages.forEach((msg, i) => {
-    console.log(`  [${i + 1}] ${msg.role}: ${msg.content?.substring(0, 100)}${(msg.content?.length || 0) > 100 ? '...' : ''}`);
+    const content = getContentString(msg.content);
+    console.log(`  [${i + 1}] ${msg.role}: ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`);
   });
   console.log('========================================\n');
 
@@ -436,6 +620,247 @@ app.post('/v1/moderations', (req: Request, res: Response) => {
   });
 });
 
+// ==================== 图片生成 API ====================
+
+// POST /v1/images/generations - 图片生成
+app.post('/v1/images/generations', async (req: Request, res: Response) => {
+  const body = req.body as import('./types.js').ImageGenerationRequest;
+
+  if (!body.prompt) {
+    return res.status(400).json({
+      error: {
+        message: 'Invalid request: prompt is required',
+        type: 'invalid_request_error',
+      }
+    });
+  }
+
+  const requestId = generateRequestId();
+  const n = body.n || 1;
+  const size = body.size || '1024x1024';
+
+  console.log('\n========================================');
+  console.log('收到新的图片生成请求');
+  console.log('请求ID:', requestId);
+  console.log('模型:', body.model || 'dall-e-3');
+  console.log('提示词:', body.prompt.substring(0, 100));
+  console.log('数量:', n);
+  console.log('尺寸:', size);
+  console.log('质量:', body.quality || 'standard');
+  console.log('========================================\n');
+
+  // 创建待处理请求
+  const pending: PendingRequest = {
+    requestId,
+    request: { model: body.model || 'dall-e-3', messages: [] },
+    isStream: false,
+    createdAt: Date.now(),
+    resolve: () => {},
+    requestType: 'image',
+    imageRequest: {
+      model: body.model || 'dall-e-3',
+      prompt: body.prompt,
+      n,
+      size,
+      quality: body.quality,
+      style: body.style,
+      response_format: body.response_format,
+      user: body.user,
+    },
+  };
+
+  const responsePromise = new Promise<Array<{ url?: string; b64_json?: string }>>((resolve) => {
+    pending.resolve = (data: string) => {
+      try {
+        resolve(JSON.parse(data));
+      } catch {
+        resolve([]);
+      }
+    };
+  });
+
+  addPendingRequest(pending);
+  broadcastRequest(pending);
+
+  const timeout = setTimeout(() => {
+    removePendingRequest(requestId);
+    res.json({
+      created: Math.floor(Date.now() / 1000),
+      data: [{ url: 'https://placeholder.com/timeout.png' }],
+    });
+  }, 10 * 60 * 1000);
+
+  try {
+    const images = await responsePromise;
+    clearTimeout(timeout);
+    res.json({
+      created: Math.floor(Date.now() / 1000),
+      data: images,
+    });
+  } catch {
+    clearTimeout(timeout);
+    res.status(500).json({
+      error: { message: 'Internal server error', type: 'server_error' }
+    });
+  }
+});
+
+// POST /v1/images/edits - 图片编辑
+app.post('/v1/images/edits', async (req: Request, res: Response) => {
+  const body = req.body;
+
+  if (!body.image || !body.prompt) {
+    return res.status(400).json({
+      error: {
+        message: 'Invalid request: image and prompt are required',
+        type: 'invalid_request_error',
+      }
+    });
+  }
+
+  const requestId = generateRequestId();
+  console.log('\n========================================');
+  console.log('收到新的图片编辑请求');
+  console.log('请求ID:', requestId);
+  console.log('提示词:', body.prompt?.substring(0, 100));
+  console.log('========================================\n');
+
+  // 创建待处理请求（复用图片生成逻辑）
+  const pending: PendingRequest = {
+    requestId,
+    request: { model: body.model || 'dall-e-2', messages: [] },
+    isStream: false,
+    createdAt: Date.now(),
+    resolve: () => {},
+    requestType: 'image',
+    imageRequest: {
+      model: body.model || 'dall-e-2',
+      prompt: `[编辑图片] ${body.prompt}`,
+      n: body.n || 1,
+      size: body.size || '1024x1024',
+      response_format: body.response_format,
+    },
+  };
+
+  const responsePromise = new Promise<Array<{ url?: string; b64_json?: string }>>((resolve) => {
+    pending.resolve = (data: string) => {
+      try {
+        resolve(JSON.parse(data));
+      } catch {
+        resolve([]);
+      }
+    };
+  });
+
+  addPendingRequest(pending);
+  broadcastRequest(pending);
+
+  const timeout = setTimeout(() => {
+    removePendingRequest(requestId);
+    res.json({
+      created: Math.floor(Date.now() / 1000),
+      data: [{ url: 'https://placeholder.com/timeout.png' }],
+    });
+  }, 10 * 60 * 1000);
+
+  try {
+    const images = await responsePromise;
+    clearTimeout(timeout);
+    res.json({
+      created: Math.floor(Date.now() / 1000),
+      data: images,
+    });
+  } catch {
+    clearTimeout(timeout);
+    res.status(500).json({
+      error: { message: 'Internal server error', type: 'server_error' }
+    });
+  }
+});
+
+// ==================== 视频生成 API ====================
+
+// POST /v1/videos/generations - 视频生成
+app.post('/v1/videos/generations', async (req: Request, res: Response) => {
+  const body = req.body as import('./types.js').VideoGenerationRequest;
+
+  if (!body.prompt) {
+    return res.status(400).json({
+      error: {
+        message: 'Invalid request: prompt is required',
+        type: 'invalid_request_error',
+      }
+    });
+  }
+
+  const requestId = generateRequestId();
+  const duration = body.duration || 5;
+  const aspectRatio = body.aspect_ratio || '16:9';
+
+  console.log('\n========================================');
+  console.log('收到新的视频生成请求');
+  console.log('请求ID:', requestId);
+  console.log('模型:', body.model || 'sora');
+  console.log('提示词:', body.prompt.substring(0, 100));
+  console.log('时长:', duration, '秒');
+  console.log('宽高比:', aspectRatio);
+  console.log('========================================\n');
+
+  // 创建待处理请求
+  const pending: PendingRequest = {
+    requestId,
+    request: { model: body.model || 'sora', messages: [] },
+    isStream: false,
+    createdAt: Date.now(),
+    resolve: () => {},
+    requestType: 'video',
+    videoRequest: {
+      model: body.model || 'sora',
+      prompt: body.prompt,
+      size: body.size,
+      duration,
+      aspect_ratio: aspectRatio,
+      response_format: body.response_format,
+      user: body.user,
+    },
+  };
+
+  const responsePromise = new Promise<Array<{ url?: string; b64_json?: string }>>((resolve) => {
+    pending.resolve = (data: string) => {
+      try {
+        resolve(JSON.parse(data));
+      } catch {
+        resolve([]);
+      }
+    };
+  });
+
+  addPendingRequest(pending);
+  broadcastRequest(pending);
+
+  const timeout = setTimeout(() => {
+    removePendingRequest(requestId);
+    res.json({
+      created: Math.floor(Date.now() / 1000),
+      data: [{ url: 'https://placeholder.com/timeout.mp4' }],
+    });
+  }, 30 * 60 * 1000); // 视频生成给更长超时
+
+  try {
+    const videos = await responsePromise;
+    clearTimeout(timeout);
+    res.json({
+      created: Math.floor(Date.now() / 1000),
+      data: videos,
+    });
+  } catch {
+    clearTimeout(timeout);
+    res.status(500).json({
+      error: { message: 'Internal server error', type: 'server_error' }
+    });
+  }
+});
+
 // ==================== Anthropic API 路由 ====================
 
 // POST /v1/messages - Anthropic Messages API
@@ -497,7 +922,8 @@ app.post('/v1/messages', async (req: Request, res: Response) => {
   console.log('----------------------------------------');
 
   messages.forEach((msg, i) => {
-    console.log(`  [${i + 1}] ${msg.role}: ${msg.content?.substring(0, 100)}${(msg.content?.length || 0) > 100 ? '...' : ''}`);
+    const content = getContentString(msg.content);
+    console.log(`  [${i + 1}] ${msg.role}: ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`);
   });
   console.log('========================================\n');
 
@@ -632,6 +1058,9 @@ app.post('/v1/messages', async (req: Request, res: Response) => {
 
 // ==================== Google Gemini API 路由 ====================
 
+// 所有 /v1beta/* 路由应用 API Key 认证中间件
+app.use('/v1beta', apiKeyAuthMiddleware);
+
 // POST /v1beta/models/:modelId:generateContent - Gemini generateContent
 app.post('/v1beta/models/:modelId:generateContent', async (req: Request, res: Response) => {
   const modelId = (req.params.modelId as string).replace(':', '');
@@ -687,6 +1116,18 @@ async function handleChatRequest(
   isStream: boolean,
   res: Response
 ) {
+  // 提取请求参数
+  const requestParams = {
+    temperature: body.temperature,
+    top_p: body.top_p,
+    max_tokens: body.max_tokens,
+    presence_penalty: body.presence_penalty,
+    frequency_penalty: body.frequency_penalty,
+    stop: body.stop,
+    n: body.n,
+    user: body.user,
+  };
+
   if (isStream) {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -715,7 +1156,8 @@ async function handleChatRequest(
             res.end();
           }
         }
-      }
+      },
+      requestParams,
     };
 
     addPendingRequest(pending);
@@ -741,6 +1183,7 @@ async function handleChatRequest(
       isStream: false,
       createdAt: Date.now(),
       resolve: () => {},
+      requestParams,
     };
 
     const responsePromise = new Promise<string>((resolve) => {
@@ -818,7 +1261,8 @@ async function handleGeminiRequest(
   console.log('----------------------------------------');
 
   messages.forEach((msg, i) => {
-    console.log(`  [${i + 1}] ${msg.role}: ${msg.content?.substring(0, 100)}${(msg.content?.length || 0) > 100 ? '...' : ''}`);
+    const content = getContentString(msg.content);
+    console.log(`  [${i + 1}] ${msg.role}: ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`);
   });
   console.log('========================================\n');
 
@@ -995,7 +1439,9 @@ app.use((req: Request, res: Response) => {
 async function start() {
   // 加载配置和模型
   await loadModels();
+  await loadApiKeys();
   const serverConfig = await getServerConfig();
+  const settings = await getSettings();
   const PORT = process.env.PORT || serverConfig.port;
 
   server.listen(PORT, () => {
@@ -1010,12 +1456,18 @@ async function start() {
     console.log('    POST /v1/chat/completions');
     console.log('    POST /v1/responses');
     console.log('    GET  /v1/models');
+    console.log('    POST /v1/images/generations');
+    console.log('    POST /v1/images/edits');
+    console.log('    POST /v1/embeddings');
+    console.log('    POST /v1/moderations');
     console.log('  Anthropic:');
     console.log('    POST /v1/messages');
     console.log('  Google Gemini:');
     console.log('    POST /v1beta/models/{model}:generateContent');
     console.log('    POST /v1beta/models/{model}:streamGenerateContent');
     console.log('    GET  /v1beta/models');
+    console.log('  视频生成:');
+    console.log('    POST /v1/videos/generations');
     console.log('========================================');
     console.log('模型数量:', getAllModels().length);
   });

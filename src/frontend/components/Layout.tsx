@@ -15,9 +15,6 @@ import {
   Badge,
   useMediaQuery,
   useTheme,
-  BottomNavigation,
-  BottomNavigationAction,
-  Paper,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -25,6 +22,7 @@ import {
   Settings,
   Cable,
   Settings2,
+  Key,
 } from 'lucide-react';
 import { useServer } from '../contexts/ServerContext';
 
@@ -46,6 +44,7 @@ export default function Layout({ children, currentPage, onPageChange }: LayoutPr
   const menuItems = [
     { id: 'requests', label: '请求队列', icon: <Inbox size={20} /> },
     { id: 'models', label: '模型管理', icon: <Settings size={20} /> },
+    { id: 'apikeys', label: 'API 密钥', icon: <Key size={20} /> },
     { id: 'settings', label: '系统设置', icon: <Settings2 size={20} /> },
   ];
 
@@ -117,45 +116,6 @@ export default function Layout({ children, currentPage, onPageChange }: LayoutPr
         </Box>
       </Box>
     </Box>
-  );
-
-  // 移动端底部导航
-  const bottomNav = (
-    <Paper 
-      sx={{ 
-        position: 'fixed', 
-        bottom: 0, 
-        left: 0, 
-        right: 0,
-        borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-        borderRadius: 0,
-        zIndex: theme.zIndex.appBar,
-      }} 
-      elevation={0}
-    >
-      <BottomNavigation
-        value={currentPage}
-        onChange={(_, newValue) => onPageChange(newValue)}
-        sx={{ backgroundColor: 'background.paper' }}
-      >
-        {menuItems.map((item) => (
-          <BottomNavigationAction
-            key={item.id}
-            value={item.id}
-            label={item.label}
-            icon={
-              item.id === 'requests' ? (
-                <Badge badgeContent={pendingCount} color="error">
-                  {item.icon}
-                </Badge>
-              ) : (
-                item.icon
-              )
-            }
-          />
-        ))}
-      </BottomNavigation>
-    </Paper>
   );
 
   return (
@@ -270,7 +230,6 @@ export default function Layout({ children, currentPage, onPageChange }: LayoutPr
         <Box sx={{ 
           flex: 1, 
           p: { xs: 1.5, sm: 2, md: 3 },
-          pb: isMobile ? 10 : 3, // 移动端为底部导航留更多空间
         }}>
           <Container 
             maxWidth="lg" 
@@ -281,9 +240,6 @@ export default function Layout({ children, currentPage, onPageChange }: LayoutPr
           </Container>
         </Box>
       </Box>
-
-      {/* 移动端底部导航 */}
-      {isMobile && bottomNav}
     </Box>
   );
 }

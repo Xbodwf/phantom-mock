@@ -1,10 +1,12 @@
 import { readFile, writeFile, access, mkdir } from 'fs/promises';
 import { join } from 'path';
-import type { Model } from './types.js';
+import type { Model, ApiKey } from './types.js';
+import { randomBytes } from 'crypto';
 
 const DATA_DIR = join(process.cwd(), 'data');
 const CONFIG_FILE = join(DATA_DIR, 'config.json');
 const MODELS_FILE = join(DATA_DIR, 'models.json');
+const API_KEYS_FILE = join(DATA_DIR, 'api_keys.json');
 
 export interface ServerConfig {
   port: number;
@@ -13,6 +15,9 @@ export interface ServerConfig {
 
 export interface SystemSettings {
   streamDelay: number; // 流式响应延迟时间（毫秒）
+  requireApiKey?: boolean; // 全局是否需要API Key（默认false）
+  smoothOutput?: boolean; // 平滑输出模式（默认false）
+  smoothSpeed?: number; // 平滑输出速度，字符/秒（默认20）
 }
 
 export interface Config {
@@ -23,6 +28,16 @@ export interface Config {
     owned_by: string;
     description?: string;
     context_length?: number;
+    aliases?: string[];
+    max_output_tokens?: number;
+    pricing?: {
+      input?: number;
+      output?: number;
+    };
+    api_key?: string;
+    api_base_url?: string;
+    supported_features?: string[];
+    require_api_key?: boolean;
   }>;
 }
 
@@ -34,6 +49,9 @@ const defaultConfig: Config = {
   },
   settings: {
     streamDelay: 500, // 默认 500ms 延迟
+    requireApiKey: false, // 默认不需要API Key
+    smoothOutput: false, // 默认不启用平滑输出
+    smoothSpeed: 20, // 默认每秒20个字符
   },
   models: [
     { id: 'gemini-2.5-flash', owned_by: 'google', description: 'Fast and efficient Gemini 2.5', context_length: 1000000 },
@@ -48,6 +66,7 @@ const defaultConfig: Config = {
 
 let config: Config | null = null;
 let models: Model[] = [];
+let apiKeys: ApiKey[] = [];
 
 // 确保目录存在
 async function ensureDir() {
@@ -103,6 +122,13 @@ export async function loadModels(): Promise<Model[]> {
       owned_by: m.owned_by,
       description: m.description,
       context_length: m.context_length,
+      aliases: m.aliases,
+      max_output_tokens: m.max_output_tokens,
+      pricing: m.pricing,
+      api_key: m.api_key,
+      api_base_url: m.api_base_url,
+      supported_features: m.supported_features,
+      require_api_key: m.require_api_key,
     }));
     return models;
   } catch (e) {
@@ -163,8 +189,108 @@ async function saveModels(): Promise<void> {
     owned_by: m.owned_by,
     description: m.description,
     context_length: m.context_length,
+    aliases: m.aliases,
+    max_output_tokens: m.max_output_tokens,
+    pricing: m.pricing,
+    api_key: m.api_key,
+    api_base_url: m.api_base_url,
+    supported_features: m.supported_features,
+    require_api_key: m.require_api_key,
   }));
   await saveConfig(config);
+}
+
+// ==================== API Key 管理 ====================
+
+// 生成随机 API Key
+function generateApiKeyString(): string {
+  const prefix = 'sk-fake';
+  const random = randomBytes(24).toString('base64url');
+  return `${prefix}-${random}`;
+}
+
+// 加载 API Keys
+export async function loadApiKeys(): Promise<ApiKey[]> {
+  if (apiKeys.length > 0) return apiKeys;
+
+  try {
+    await ensureDir();
+    await ensureFile(API_KEYS_FILE, []);
+    const content = await readFile(API_KEYS_FILE, 'utf-8');
+    apiKeys = JSON.parse(content);
+    return apiKeys;
+  } catch (e) {
+    console.warn('[Storage] 加载 API Keys 失败:', e);
+    apiKeys = [];
+    return apiKeys;
+  }
+}
+
+// 保存 API Keys
+async function saveApiKeys(): Promise<void> {
+  await writeFile(API_KEYS_FILE, JSON.stringify(apiKeys, null, 2));
+}
+
+// 获取所有 API Keys
+export function getAllApiKeys(): ApiKey[] {
+  return apiKeys.map(k => ({
+    ...k,
+    key: k.key.substring(0, 12) + '...', // 隐藏完整 key
+  }));
+}
+
+// 创建 API Key
+export async function createApiKey(name: string, permissions?: ApiKey['permissions']): Promise<ApiKey> {
+  const newKey: ApiKey = {
+    id: `key_${Date.now()}`,
+    key: generateApiKeyString(),
+    name,
+    createdAt: Date.now(),
+    enabled: true,
+    permissions,
+  };
+  apiKeys.push(newKey);
+  await saveApiKeys();
+  return newKey;
+}
+
+// 验证 API Key
+export async function validateApiKey(key: string): Promise<ApiKey | null> {
+  const found = apiKeys.find(k => k.key === key && k.enabled);
+  if (found) {
+    found.lastUsedAt = Date.now();
+    await saveApiKeys();
+    return found;
+  }
+  return null;
+}
+
+// 更新 API Key
+export async function updateApiKey(id: string, updates: Partial<ApiKey>): Promise<ApiKey | null> {
+  const index = apiKeys.findIndex(k => k.id === id);
+  if (index === -1) return null;
+
+  // 不允许更新 key 本身
+  delete updates.key;
+  apiKeys[index] = { ...apiKeys[index], ...updates };
+  await saveApiKeys();
+  return apiKeys[index];
+}
+
+// 删除 API Key
+export async function deleteApiKey(id: string): Promise<boolean> {
+  const index = apiKeys.findIndex(k => k.id === id);
+  if (index === -1) return false;
+
+  apiKeys.splice(index, 1);
+  await saveApiKeys();
+  return true;
+}
+
+// 获取完整 API Key（仅用于显示一次）
+export function getFullApiKey(id: string): string | null {
+  const found = apiKeys.find(k => k.id === id);
+  return found ? found.key : null;
 }
 
 // 获取服务器配置
@@ -176,7 +302,7 @@ export async function getServerConfig(): Promise<ServerConfig> {
 // 获取系统设置
 export async function getSettings(): Promise<SystemSettings> {
   const cfg = await loadConfig();
-  return cfg.settings || { streamDelay: 500 };
+  return cfg.settings || { streamDelay: 500, requireApiKey: false, smoothOutput: false, smoothSpeed: 20 };
 }
 
 // 更新系统设置

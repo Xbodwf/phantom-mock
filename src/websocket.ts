@@ -53,8 +53,8 @@ export function initWebSocket(server: import('http').Server) {
 }
 
 function handleClientMessage(ws: WebSocket, msg: WSMessage) {
-  if (msg.type === 'response' || msg.type === 'stream' || msg.type === 'stream_end') {
-    const payload = msg.payload as { requestId: string; content: string };
+  if (msg.type === 'response' || msg.type === 'stream' || msg.type === 'stream_end' || msg.type === 'image_response' || msg.type === 'video_response') {
+    const payload = msg.payload as { requestId: string; content: string; images?: any[]; videos?: any[] };
     const req = getPendingRequest(payload.requestId);
 
     if (!req) {
@@ -79,6 +79,16 @@ function handleClientMessage(ws: WebSocket, msg: WSMessage) {
       }
       removePendingRequest(payload.requestId);
       console.log('[WS] 流式请求已完成:', payload.requestId);
+    } else if (msg.type === 'image_response') {
+      // 图片响应
+      req.resolve(JSON.stringify(payload.images || []));
+      removePendingRequest(payload.requestId);
+      console.log('[WS] 图片请求已处理:', payload.requestId);
+    } else if (msg.type === 'video_response') {
+      // 视频响应
+      req.resolve(JSON.stringify(payload.videos || []));
+      removePendingRequest(payload.requestId);
+      console.log('[WS] 视频请求已处理:', payload.requestId);
     }
   }
 }
@@ -89,6 +99,10 @@ export function broadcastRequest(req: PendingRequest) {
     payload: {
       requestId: req.requestId,
       data: req.request,
+      requestParams: req.requestParams,
+      requestType: req.requestType,
+      imageRequest: req.imageRequest,
+      videoRequest: req.videoRequest,
     }
   };
   const data = JSON.stringify(msg);
