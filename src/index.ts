@@ -183,9 +183,29 @@ async function apiKeyAuthMiddleware(req: Request, res: Response, next: () => voi
 
 // ==================== 管理 API ====================
 
-// GET /api/models - 获取模型列表（管理用）
-app.get('/api/models', authMiddleware, adminMiddleware, (req: Request, res: Response) => {
-  res.json({ models: getAllModels() });
+// GET /api/models - 获取模型列表（所有登录用户可访问）
+app.get('/api/models', authMiddleware, (req: Request, res: Response) => {
+  const models = getAllModels();
+
+  // 添加 Actions 作为模型
+  const userId = (req as any).user?.id;
+  const actions = getPublicAndUserActions(userId);
+  const actionModels = actions.map(action => ({
+    id: `actions/${action.name}`,
+    object: 'model',
+    created: action.createdAt,
+    owned_by: 'user',
+    description: action.description || `Action: ${action.name}`,
+    context_length: 4096,
+    max_output_tokens: 2048,
+    type: 'action',
+    actionId: action.id,
+  }));
+
+  res.json({
+    models: [...models, ...actionModels],
+    data: [...models, ...actionModels] // 兼容两种格式
+  });
 });
 
 // POST /api/models - 添加模型

@@ -91,22 +91,28 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     fetchModels();
 
     const token = localStorage.getItem('token');
+    const user = localStorage.getItem('user');
+    const isAdmin = user ? JSON.parse(user).role === 'admin' : false;
+
     const headers: HeadersInit = {};
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    fetch('/api/stats', { headers })
-      .then(res => res.json())
-      .then(setStats)
-      .catch(console.error);
+    // 只有管理员才获取 stats 和 settings
+    if (isAdmin) {
+      fetch('/api/stats', { headers })
+        .then(res => res.json())
+        .then(setStats)
+        .catch(console.error);
 
-    fetch('/api/settings', { headers })
-      .then(res => res.json())
-      .then(setSettings)
-      .catch(console.error);
+      fetch('/api/settings', { headers })
+        .then(res => res.json())
+        .then(setSettings)
+        .catch(console.error);
+    }
 
-    fetch('/api/keys', { headers })
+    fetch('/api/user/api-keys', { headers })
       .then(res => res.json())
       .then(data => setApiKeys(data.keys || []))
       .catch(console.error);
@@ -279,7 +285,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-    const res = await fetch('/api/keys', { headers });
+    const res = await fetch('/api/user/api-keys', { headers });
     const data = await res.json();
     setApiKeys(data.keys || []);
   }, []);
@@ -290,7 +296,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-    const res = await fetch('/api/keys', {
+    const res = await fetch('/api/user/api-keys', {
       method: 'POST',
       headers,
       body: JSON.stringify({ name, permissions }),
@@ -309,7 +315,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-    await fetch(`/api/keys/${id}`, {
+    await fetch(`/api/user/api-keys/${id}`, {
       method: 'PUT',
       headers,
       body: JSON.stringify(updates),
@@ -323,7 +329,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-    await fetch(`/api/keys/${id}`, { method: 'DELETE', headers });
+    await fetch(`/api/user/api-keys/${id}`, { method: 'DELETE', headers });
     await refreshApiKeys();
   }, [refreshApiKeys]);
 

@@ -58,7 +58,7 @@ export default function ApiKeyManager() {
   const handleRevealKey = async (id: string) => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get(`/api/keys/${id}/reveal`, {
+      const response = await axios.get(`/api/user/api-keys/${id}/reveal`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       setRevealedKeys(prev => ({

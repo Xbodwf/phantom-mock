@@ -105,11 +105,50 @@ router.put('/password', authMiddleware, async (req: AuthRequest, res: Response) 
 router.get('/api-keys', authMiddleware, (req: AuthRequest, res: Response) => {
   try {
     const allKeys = getAllApiKeys();
-    const userKeys = allKeys.filter(k => k.userId === req.userId);
+    const userKeys = allKeys.filter(k => k.userId === req.userId).map(k => ({
+      ...k,
+      key: undefined, // 不返回完整 key
+    }));
 
-    res.json(userKeys);
+    res.json({ keys: userKeys });
   } catch (error) {
     res.status(500).json({ error: 'Failed to get API keys' });
+  }
+});
+
+/**
+ * 查看 API Key 完整内容（增加查看计数）
+ */
+router.get('/api-keys/:id/reveal', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const allKeys = getAllApiKeys();
+    const apiKey = allKeys.find(k => k.id === id && k.userId === req.userId);
+
+    if (!apiKey) {
+      return res.status(404).json({ error: 'API key not found' });
+    }
+
+    // 增加查看计数
+    const viewCount = (apiKey.viewCount || 0) + 1;
+
+    if (viewCount > 3) {
+      return res.status(403).json({
+        error: 'View limit exceeded',
+        message: '此 API Key 已超过查看次数限制（最多3次）'
+      });
+    }
+
+    await updateApiKey(id, { viewCount });
+
+    res.json({
+      success: true,
+      key: apiKey.key,
+      viewCount,
+      remainingViews: 3 - viewCount
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to reveal API key' });
   }
 });
 
@@ -135,10 +174,13 @@ router.post('/api-keys', authMiddleware, async (req: AuthRequest, res: Response)
     const fullKey = getFullApiKey(apiKey.id);
 
     res.status(201).json({
-      id: apiKey.id,
-      name: apiKey.name,
-      key: fullKey,
-      createdAt: apiKey.createdAt,
+      success: true,
+      key: {
+        id: apiKey.id,
+        name: apiKey.name,
+        key: fullKey,
+        createdAt: apiKey.createdAt,
+      },
       message: 'Save this key securely. You will not be able to see it again.',
     });
   } catch (error) {
