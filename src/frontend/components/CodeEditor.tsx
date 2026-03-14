@@ -20,7 +20,7 @@ export function CodeEditor({
   const { theme } = useTheme();
 
   return (
-    <Box sx={{ border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: 1, overflow: 'hidden' }}>
+    <Box sx={{ width: '100%', height: '100%', overflow: 'hidden' }}>
       <Editor
         height={height}
         defaultLanguage={language}

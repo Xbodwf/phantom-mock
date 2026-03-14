@@ -29,6 +29,10 @@ import {
   Tab,
   Divider,
   Alert,
+  MenuItem,
+  Select,
+  FormControl,
+  InputLabel,
 } from '@mui/material';
 import {
   Plus,
@@ -38,6 +42,7 @@ import {
   Key,
   Link,
   Tag,
+  Globe,
 } from 'lucide-react';
 import { useServer } from '../contexts/ServerContext';
 import type { Model, ModelUpdateParams } from '../types';
@@ -74,10 +79,13 @@ interface FormData {
   context_length: number;
   aliases: string;
   max_output_tokens: number;
+  pricing_type: 'token' | 'request';
   pricing_input: number;
   pricing_output: number;
+  pricing_per_request: number;
   api_key: string;
   api_base_url: string;
+  api_type: 'openai' | 'anthropic' | 'google' | 'azure' | 'custom';
   supported_features: string;
 }
 
@@ -88,10 +96,13 @@ const defaultFormData: FormData = {
   context_length: 1048576,
   aliases: '',
   max_output_tokens: 8192,
+  pricing_type: 'token',
   pricing_input: 0,
   pricing_output: 0,
+  pricing_per_request: 0,
   api_key: '',
   api_base_url: '',
+  api_type: 'openai',
   supported_features: '',
 };
 
@@ -117,10 +128,13 @@ export default function ModelManager() {
         context_length: model.context_length || 1048576,
         aliases: model.aliases?.join(', ') || '',
         max_output_tokens: model.max_output_tokens || 8192,
+        pricing_type: model.pricing?.type || 'token',
         pricing_input: model.pricing?.input || 0,
         pricing_output: model.pricing?.output || 0,
+        pricing_per_request: model.pricing?.perRequest || 0,
         api_key: model.api_key || '',
         api_base_url: model.api_base_url || '',
+        api_type: model.api_type || 'openai',
         supported_features: model.supported_features?.join(', ') || '',
       });
     } else {
@@ -146,12 +160,16 @@ export default function ModelManager() {
       context_length: formData.context_length,
       aliases: formData.aliases ? formData.aliases.split(',').map(s => s.trim()).filter(Boolean) : undefined,
       max_output_tokens: formData.max_output_tokens,
-      pricing: formData.pricing_input > 0 || formData.pricing_output > 0 ? {
+      pricing: (formData.pricing_type === 'token' && (formData.pricing_input > 0 || formData.pricing_output > 0)) ||
+               (formData.pricing_type === 'request' && formData.pricing_per_request > 0) ? {
+        type: formData.pricing_type,
         input: formData.pricing_input,
         output: formData.pricing_output,
+        perRequest: formData.pricing_per_request,
       } : undefined,
       api_key: formData.api_key || undefined,
       api_base_url: formData.api_base_url || undefined,
+      api_type: formData.api_type || undefined,
       supported_features: formData.supported_features ? formData.supported_features.split(',').map(s => s.trim()).filter(Boolean) : undefined,
     };
 
@@ -221,12 +239,12 @@ export default function ModelManager() {
                     </Typography>
                   )}
                   <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 0.5 }}>
-                    <Chip size="small" label={`${t('models.manager.contextLength')}: ${formatContextLength(model.context_length)}`} />
+                    <Chip key="context" size="small" label={`${t('models.manager.contextLength')}: ${formatContextLength(model.context_length)}`} />
                     {model.max_output_tokens && (
-                      <Chip size="small" label={`${t('common.output')}: ${formatContextLength(model.max_output_tokens)}`} />
+                      <Chip key="output" size="small" label={`${t('common.output')}: ${formatContextLength(model.max_output_tokens)}`} />
                     )}
                     {model.api_key && (
-                      <Chip size="small" icon={<Key size={14} />} label={t('models.manager.configuredApiKey')} color="success" />
+                      <Chip key="apikey" size="small" icon={<Key size={14} />} label={t('models.manager.configuredApiKey')} color="success" />
                     )}
                   </Stack>
                 </CardContent>
@@ -334,30 +352,69 @@ export default function ModelManager() {
                 <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <DollarSign size={16} /> {t('models.manager.pricingTitle')}
                 </Typography>
-                <Stack direction="row" spacing={2}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>{t('models.manager.pricingType')}</InputLabel>
+                  <Select
+                    value={formData.pricing_type}
+                    label={t('models.manager.pricingType')}
+                    onChange={(e) => setFormData({ ...formData, pricing_type: e.target.value })}
+                  >
+                    <MenuItem value="token">{t('models.manager.pricingByToken')}</MenuItem>
+                    <MenuItem value="request">{t('models.manager.pricingByRequest')}</MenuItem>
+                  </Select>
+                </FormControl>
+
+                {formData.pricing_type === 'token' ? (
+                  <Stack direction="row" spacing={2}>
+                    <TextField
+                      label={t('models.manager.inputPrice')}
+                      type="number"
+                      value={formData.pricing_input}
+                      onChange={(e) => setFormData({ ...formData, pricing_input: parseFloat(e.target.value) || 0 })}
+                      size="small"
+                      inputProps={{ min: 0, step: 0.0001 }}
+                    />
+                    <TextField
+                      label={t('models.manager.outputPrice')}
+                      type="number"
+                      value={formData.pricing_output}
+                      onChange={(e) => setFormData({ ...formData, pricing_output: parseFloat(e.target.value) || 0 })}
+                      size="small"
+                      inputProps={{ min: 0, step: 0.0001 }}
+                    />
+                  </Stack>
+                ) : (
                   <TextField
-                    label={t('models.manager.inputPrice')}
+                    label={t('models.manager.pricePerRequest')}
                     type="number"
-                    value={formData.pricing_input}
-                    onChange={(e) => setFormData({ ...formData, pricing_input: parseFloat(e.target.value) || 0 })}
+                    fullWidth
+                    value={formData.pricing_per_request}
+                    onChange={(e) => setFormData({ ...formData, pricing_per_request: parseFloat(e.target.value) || 0 })}
                     size="small"
                     inputProps={{ min: 0, step: 0.0001 }}
+                    helperText={t('models.manager.pricePerRequestHelper')}
                   />
-                  <TextField
-                    label={t('models.manager.outputPrice')}
-                    type="number"
-                    value={formData.pricing_output}
-                    onChange={(e) => setFormData({ ...formData, pricing_output: parseFloat(e.target.value) || 0 })}
-                    size="small"
-                    inputProps={{ min: 0, step: 0.0001 }}
-                  />
-                </Stack>
+                )}
 
                 <Divider sx={{ my: 1 }} />
 
                 <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Key size={16} /> {t('models.manager.apiConfig')}
+                  <Globe size={16} /> {t('models.manager.apiConfig')}
                 </Typography>
+                <FormControl fullWidth size="small">
+                  <InputLabel>{t('models.manager.apiType')}</InputLabel>
+                  <Select
+                    value={formData.api_type}
+                    label={t('models.manager.apiType')}
+                    onChange={(e) => setFormData({ ...formData, api_type: e.target.value })}
+                  >
+                    <MenuItem value="openai">OpenAI</MenuItem>
+                    <MenuItem value="anthropic">Anthropic (Claude)</MenuItem>
+                    <MenuItem value="google">Google (Gemini)</MenuItem>
+                    <MenuItem value="azure">Azure OpenAI</MenuItem>
+                    <MenuItem value="custom">{t('models.manager.customApi')}</MenuItem>
+                  </Select>
+                </FormControl>
                 <TextField
                   label={t('models.manager.apiKey')}
                   fullWidth
@@ -374,6 +431,7 @@ export default function ModelManager() {
                   onChange={(e) => setFormData({ ...formData, api_base_url: e.target.value })}
                   placeholder="https://api.openai.com/v1"
                   size="small"
+                  helperText={t('models.manager.apiBaseUrlHelper')}
                 />
 
                 <Divider sx={{ my: 1 }} />
@@ -601,22 +659,46 @@ export default function ModelManager() {
               <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <DollarSign size={16} /> {t('models.manager.pricingTitle')}
               </Typography>
-              <Stack direction="row" spacing={2}>
+              <FormControl fullWidth>
+                <InputLabel>{t('models.manager.pricingType')}</InputLabel>
+                <Select
+                  value={formData.pricing_type}
+                  label={t('models.manager.pricingType')}
+                  onChange={(e) => setFormData({ ...formData, pricing_type: e.target.value })}
+                >
+                  <MenuItem value="token">{t('models.manager.pricingByToken')}</MenuItem>
+                  <MenuItem value="request">{t('models.manager.pricingByRequest')}</MenuItem>
+                </Select>
+              </FormControl>
+
+              {formData.pricing_type === 'token' ? (
+                <Stack direction="row" spacing={2}>
+                  <TextField
+                    label={t('models.manager.inputPrice')}
+                    type="number"
+                    value={formData.pricing_input}
+                    onChange={(e) => setFormData({ ...formData, pricing_input: parseFloat(e.target.value) || 0 })}
+                    inputProps={{ min: 0, step: 0.0001 }}
+                  />
+                  <TextField
+                    label={t('models.manager.outputPrice')}
+                    type="number"
+                    value={formData.pricing_output}
+                    onChange={(e) => setFormData({ ...formData, pricing_output: parseFloat(e.target.value) || 0 })}
+                    inputProps={{ min: 0, step: 0.0001 }}
+                  />
+                </Stack>
+              ) : (
                 <TextField
-                  label={t('models.manager.inputPrice')}
+                  label={t('models.manager.pricePerRequest')}
                   type="number"
-                  value={formData.pricing_input}
-                  onChange={(e) => setFormData({ ...formData, pricing_input: parseFloat(e.target.value) || 0 })}
+                  fullWidth
+                  value={formData.pricing_per_request}
+                  onChange={(e) => setFormData({ ...formData, pricing_per_request: parseFloat(e.target.value) || 0 })}
                   inputProps={{ min: 0, step: 0.0001 }}
+                  helperText={t('models.manager.pricePerRequestHelper')}
                 />
-                <TextField
-                  label={t('models.manager.outputPrice')}
-                  type="number"
-                  value={formData.pricing_output}
-                  onChange={(e) => setFormData({ ...formData, pricing_output: parseFloat(e.target.value) || 0 })}
-                  inputProps={{ min: 0, step: 0.0001 }}
-                />
-              </Stack>
+              )}
 
               <Divider sx={{ my: 1 }} />
 

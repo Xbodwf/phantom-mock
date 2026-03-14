@@ -13,12 +13,16 @@ import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { UserDashboard } from './pages/UserDashboard';
 import { UserApiKeysPage } from './pages/UserApiKeysPage';
+import { UserRequestsPage } from './pages/UserRequestsPage';
 import { UserUsagePage } from './pages/UserUsagePage';
 import { UserBillingPage } from './pages/UserBillingPage';
 import { UserProfilePage } from './pages/UserProfilePage';
 import { ActionsPage } from './pages/ActionsPage';
+import { ActionEditorPage } from './pages/ActionEditorPage';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { AdminUsersPage } from './pages/AdminUsersPage';
+import { AdminUserRequestsPage } from './pages/AdminUserRequestsPage';
+import { AdminSettingsPage } from './pages/AdminSettingsPage';
 import { ModelMarketplace } from './pages/ModelMarketplace';
 import ModelManager from './components/ModelManager';
 
@@ -54,7 +58,7 @@ function createAppTheme(mode: 'light' | 'dark', primaryColor: string, secondaryC
       },
     },
     typography: {
-      fontFamily: '"Roboto", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif',
+      fontFamily: '"Lexend", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif',
       h6: {
         fontWeight: 500,
       },
@@ -179,11 +183,21 @@ function AppContent() {
               }
             />
             <Route
-              path="/api-keys"
+              path="/keys"
               element={
                 <ProtectedRoute>
                   <UserLayout>
                     <UserApiKeysPage />
+                  </UserLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/requests"
+              element={
+                <ProtectedRoute>
+                  <UserLayout>
+                    <UserRequestsPage />
                   </UserLayout>
                 </ProtectedRoute>
               }
@@ -228,6 +242,14 @@ function AppContent() {
                 </ProtectedRoute>
               }
             />
+            <Route
+              path="/actions/edit/:id"
+              element={
+                <ProtectedRoute>
+                  <ActionEditorPage />
+                </ProtectedRoute>
+              }
+            />
 
             {/* 管理员路由 */}
             <Route
@@ -251,11 +273,31 @@ function AppContent() {
               }
             />
             <Route
+              path="/console/users/:userId/requests"
+              element={
+                <ProtectedRoute requiredRole="admin">
+                  <AdminLayout>
+                    <AdminUserRequestsPage />
+                  </AdminLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/console/models"
               element={
                 <ProtectedRoute requiredRole="admin">
                   <AdminLayout>
                     <ModelManager />
+                  </AdminLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/console/settings"
+              element={
+                <ProtectedRoute requiredRole="admin">
+                  <AdminLayout>
+                    <AdminSettingsPage />
                   </AdminLayout>
                 </ProtectedRoute>
               }

@@ -4,8 +4,9 @@ import { addPendingRequest, removePendingRequest } from '../requestStore.js';
 import { buildResponse, buildStreamChunk, buildStreamDone, generateRequestId } from '../responseBuilder.js';
 import { broadcastRequest, getConnectedClientsCount } from '../websocket.js';
 import { getAllModels, getModel, validateApiKey, getUserById, updateUser, createUsageRecord, getAllActions, getActionByName, getPublicAndUserActions } from '../storage.js';
-import { calculateCost, estimateTokens } from '../billing.js';
+import { calculateCost, calculateTokens } from '../billing.js';
 import { executeAction } from '../actions/executor.js';
+import { forwardChatRequest } from '../forwarder.js';
 
 const router: Router = Router();
 
@@ -183,8 +184,9 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
   if (apiKeyObj && apiKeyObj.userId) {
     const user = getUserById(apiKeyObj.userId);
     if (user) {
-      const promptTokens = estimateTokens(
-        body.messages.map(m => getContentString(m.content)).join('\n')
+      const promptTokens = calculateTokens(
+        body.messages.map(m => getContentString(m.content)).join('\n'),
+        body.model
       );
       const estimatedCost = calculateCost(promptTokens, 0, modelExists);
 
@@ -287,6 +289,189 @@ async function handleChatRequest(
 
   const userId = apiKeyObj?.userId;
   const apiKeyId = apiKeyObj?.id;
+  const model = getModel(body.model);
+
+  // 检查是否配置了转发
+  const hasForwarding = model && model.api_base_url && model.api_key;
+
+  if (hasForwarding) {
+    // 配置了转发：尝试转发，失败则返回错误（不回退到手动模拟）
+    console.log(`[Forwarder] 转发模式：${model.api_type || 'openai'} API`);
+
+    if (isStream) {
+      // 流式转发：不允许用户模拟
+      console.log('[Forwarder] 流式转发，不允许用户模拟');
+
+      const forwardResult = await forwardChatRequest(model, body);
+
+      if (!forwardResult.success) {
+        return res.status(502).json({
+          error: {
+            message: `转发失败: ${forwardResult.error}`,
+            type: 'forwarding_error',
+            code: 'forwarding_failed',
+          }
+        });
+      }
+
+      // 记录使用情况
+      if (userId && apiKeyId) {
+        const response = forwardResult.response;
+        const cost = calculateCost(
+          response.usage?.prompt_tokens || 0,
+          response.usage?.completion_tokens || 0,
+          model
+        );
+
+        await createUsageRecord({
+          userId,
+          apiKeyId,
+          model: body.model,
+          endpoint: 'chat',
+          promptTokens: response.usage?.prompt_tokens || 0,
+          completionTokens: response.usage?.completion_tokens || 0,
+          totalTokens: response.usage?.total_tokens || 0,
+          cost,
+          timestamp: Date.now(),
+          requestId,
+        });
+
+        const user = getUserById(userId);
+        if (user) {
+          await updateUser(userId, {
+            balance: user.balance - cost,
+            totalUsage: user.totalUsage + (response.usage?.total_tokens || 0),
+          });
+        }
+      }
+
+      return res.json(forwardResult.response);
+    } else {
+      // 非流式转发：允许用户抢先回复
+      console.log('[Forwarder] 非流式转发，允许用户抢先回复');
+
+      // 创建 pending request，允许用户模拟
+      const pending: PendingRequest = {
+        requestId,
+        request: body,
+        isStream: false,
+        createdAt: Date.now(),
+        resolve: () => {},
+        requestParams,
+      };
+
+      let userResponded = false;
+      const responsePromise = new Promise<string>((resolve) => {
+        pending.resolve = (content: string) => {
+          userResponded = true;
+          resolve(content);
+        };
+      });
+
+      addPendingRequest(pending);
+      broadcastRequest(pending);
+
+      // 同时发起转发请求
+      const forwardPromise = forwardChatRequest(model, body);
+
+      // 竞速：用户回复 vs AI 转发
+      const raceResult = await Promise.race([
+        responsePromise.then(content => ({ type: 'user' as const, content })),
+        forwardPromise.then(result => ({ type: 'forward' as const, result })),
+      ]);
+
+      removePendingRequest(requestId);
+
+      if (raceResult.type === 'user') {
+        // 用户抢先回复
+        console.log('[Manual] 用户抢先回复');
+        const promptContent = body.messages.map(m => getContentString(m.content)).join('\n');
+        const response = buildResponse(raceResult.content, body.model, requestId, promptContent);
+
+        // 记录使用情况
+        if (userId && apiKeyId) {
+          const cost = calculateCost(
+            response.usage.prompt_tokens,
+            response.usage.completion_tokens,
+            model
+          );
+
+          await createUsageRecord({
+            userId,
+            apiKeyId,
+            model: body.model,
+            endpoint: 'chat',
+            promptTokens: response.usage.prompt_tokens,
+            completionTokens: response.usage.completion_tokens,
+            totalTokens: response.usage.total_tokens,
+            cost,
+            timestamp: Date.now(),
+            requestId,
+          });
+
+          const user = getUserById(userId);
+          if (user) {
+            await updateUser(userId, {
+              balance: user.balance - cost,
+              totalUsage: user.totalUsage + response.usage.total_tokens,
+            });
+          }
+        }
+
+        return res.json(response);
+      } else {
+        // AI 转发先返回
+        if (!raceResult.result.success) {
+          console.log(`[Forwarder] 转发失败: ${raceResult.result.error}`);
+          return res.status(502).json({
+            error: {
+              message: `转发失败: ${raceResult.result.error}`,
+              type: 'forwarding_error',
+              code: 'forwarding_failed',
+            }
+          });
+        }
+
+        console.log('[Forwarder] AI 转发成功');
+
+        // 记录使用情况
+        if (userId && apiKeyId) {
+          const response = raceResult.result.response;
+          const cost = calculateCost(
+            response.usage?.prompt_tokens || 0,
+            response.usage?.completion_tokens || 0,
+            model
+          );
+
+          await createUsageRecord({
+            userId,
+            apiKeyId,
+            model: body.model,
+            endpoint: 'chat',
+            promptTokens: response.usage?.prompt_tokens || 0,
+            completionTokens: response.usage?.completion_tokens || 0,
+            totalTokens: response.usage?.total_tokens || 0,
+            cost,
+            timestamp: Date.now(),
+            requestId,
+          });
+
+          const user = getUserById(userId);
+          if (user) {
+            await updateUser(userId, {
+              balance: user.balance - cost,
+              totalUsage: user.totalUsage + (response.usage?.total_tokens || 0),
+            });
+          }
+        }
+
+        return res.json(raceResult.result.response);
+      }
+    }
+  }
+
+  // 没有配置转发：纯手动模拟模式
+  console.log('[Manual] 纯手动模拟模式，等待前端用户回复...');
 
   if (isStream) {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -366,35 +551,32 @@ async function handleChatRequest(
       const response = buildResponse(content, body.model, requestId, promptContent);
 
       // 记录使用情况
-      if (userId && apiKeyId) {
-        const model = getModel(body.model);
-        if (model) {
-          const cost = calculateCost(
-            response.usage.prompt_tokens,
-            response.usage.completion_tokens,
-            model
-          );
+      if (userId && apiKeyId && model) {
+        const cost = calculateCost(
+          response.usage.prompt_tokens,
+          response.usage.completion_tokens,
+          model
+        );
 
-          await createUsageRecord({
-            userId,
-            apiKeyId,
-            model: body.model,
-            endpoint: 'chat',
-            promptTokens: response.usage.prompt_tokens,
-            completionTokens: response.usage.completion_tokens,
-            totalTokens: response.usage.total_tokens,
-            cost,
-            timestamp: Date.now(),
-            requestId,
+        await createUsageRecord({
+          userId,
+          apiKeyId,
+          model: body.model,
+          endpoint: 'chat',
+          promptTokens: response.usage.prompt_tokens,
+          completionTokens: response.usage.completion_tokens,
+          totalTokens: response.usage.total_tokens,
+          cost,
+          timestamp: Date.now(),
+          requestId,
+        });
+
+        const user = getUserById(userId);
+        if (user) {
+          await updateUser(userId, {
+            balance: user.balance - cost,
+            totalUsage: user.totalUsage + response.usage.total_tokens,
           });
-
-          const user = getUserById(userId);
-          if (user) {
-            await updateUser(userId, {
-              balance: user.balance - cost,
-              totalUsage: user.totalUsage + response.usage.total_tokens,
-            });
-          }
         }
       }
 

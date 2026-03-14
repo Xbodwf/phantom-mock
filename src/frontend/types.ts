@@ -38,9 +38,13 @@ export interface Model {
   pricing?: {
     input?: number;
     output?: number;
+    unit?: 'K' | 'M';
+    type?: 'token' | 'request';
+    perRequest?: number;
   };
   api_key?: string;
   api_base_url?: string;
+  api_type?: 'openai' | 'anthropic' | 'google' | 'azure' | 'custom';
   supported_features?: string[];
   require_api_key?: boolean; // 是否需要 API Key 才能访问
 }
@@ -48,13 +52,17 @@ export interface Model {
 // API Key 类型
 export interface ApiKey {
   id: string;
-  key: string;
+  key?: string; // 可选，列表中不返回
   name: string;
   createdAt: number;
   lastUsedAt?: number;
   enabled: boolean;
+  viewCount?: number;
   permissions?: {
     models?: string[];
+    modelsMode?: 'whitelist' | 'blacklist';
+    actions?: string[];
+    actionsMode?: 'whitelist' | 'blacklist';
     endpoints?: string[];
   };
 }
@@ -135,6 +143,14 @@ export interface Settings {
   smoothOutput?: boolean; // 平滑输出模式
   smoothSpeed?: number; // 平滑输出速度（字符/秒）
   port?: number; // 服务器端口
+  tcpServerEnabled?: boolean; // 是否启用 TCP 服务器
+  tcpServerPort?: number; // TCP 服务器端口
+  tcpClients?: Array<{
+    name: string;
+    host: string;
+    port: number;
+    enabled: boolean;
+  }>; // TCP 客户端配置
 }
 
 // 导出别名，保持兼容

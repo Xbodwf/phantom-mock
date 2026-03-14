@@ -33,7 +33,8 @@ export function UserNavBar() {
   const menuItems = [
     { label: t('userNav.dashboard'), path: '/dashboard' },
     { label: t('nav.modelMarketplace'), path: '/models' },
-    { label: t('userNav.apiKeys'), path: '/api-keys' },
+    { label: t('userNav.apiKeys'), path: '/keys' },
+    { label: t('userNav.requests'), path: '/requests' },
     { label: t('userNav.usage'), path: '/usage' },
     { label: t('userNav.billing'), path: '/billing' },
     { label: t('userNav.profile'), path: '/profile' },

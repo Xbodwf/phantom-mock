@@ -24,7 +24,7 @@ import {
   IconButton,
   Alert,
 } from '@mui/material';
-import { Edit2, Trash2 } from 'lucide-react';
+import { Edit2, Trash2, FileText } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import axios from 'axios';
@@ -168,7 +168,7 @@ export function AdminUsersPage() {
                       </TableCell>
                       <TableCell>
                         <Chip
-                          label={u.enabled ? t('common.active') : t('admin.disable')}
+                          label={u.enabled ? t('common.active') : t('common.disabled')}
                           color={u.enabled ? 'success' : 'error'}
                           size="small"
                         />
@@ -177,6 +177,13 @@ export function AdminUsersPage() {
                         {new Date(u.createdAt).toLocaleDateString()}
                       </TableCell>
                       <TableCell align="right">
+                        <IconButton
+                          size="small"
+                          onClick={() => navigate(`/console/users/${u.id}/requests`)}
+                          title={t('admin.viewRequests')}
+                        >
+                          <FileText size={18} />
+                        </IconButton>
                         <IconButton
                           size="small"
                           onClick={() => handleEditUser(u)}

@@ -23,6 +23,13 @@ export interface SystemSettings {
   requireApiKey?: boolean; // 全局是否需要API Key（默认false）
   smoothOutput?: boolean; // 平滑输出模式（默认false）
   smoothSpeed?: number; // 平滑输出速度，字符/秒（默认20）
+  emailVerificationEnabled?: boolean; // 是否启用邮箱验证（默认false）
+  emailjs?: {
+    serviceId: string; // EmailJS Service ID
+    templateId: string; // EmailJS Template ID
+    publicKey: string; // EmailJS Public Key
+    privateKey: string; // EmailJS Private Key
+  };
 }
 
 export interface Config {
@@ -38,9 +45,13 @@ export interface Config {
     pricing?: {
       input?: number;
       output?: number;
+      unit?: 'K' | 'M';
+      type?: 'token' | 'request';
+      perRequest?: number;
     };
     api_key?: string;
     api_base_url?: string;
+    api_type?: 'openai' | 'anthropic' | 'google' | 'azure' | 'custom';
     supported_features?: string[];
     require_api_key?: boolean;
   }>;
@@ -136,6 +147,7 @@ export async function loadModels(): Promise<Model[]> {
       pricing: m.pricing,
       api_key: m.api_key,
       api_base_url: m.api_base_url,
+      api_type: m.api_type,
       supported_features: m.supported_features,
       require_api_key: m.require_api_key,
     }));
@@ -203,6 +215,7 @@ async function saveModels(): Promise<void> {
     pricing: m.pricing,
     api_key: m.api_key,
     api_base_url: m.api_base_url,
+    api_type: m.api_type,
     supported_features: m.supported_features,
     require_api_key: m.require_api_key,
   }));
@@ -240,12 +253,9 @@ async function saveApiKeys(): Promise<void> {
   await writeFile(API_KEYS_FILE, JSON.stringify(apiKeys, null, 2));
 }
 
-// 获取所有 API Keys
+// 获取所有 API Keys（返回完整对象）
 export function getAllApiKeys(): ApiKey[] {
-  return apiKeys.map(k => ({
-    ...k,
-    key: k.key.substring(0, 12) + '...', // 隐藏完整 key
-  }));
+  return apiKeys;
 }
 
 // 创建 API Key
@@ -256,6 +266,7 @@ export async function createApiKey(name: string, permissions?: ApiKey['permissio
     name,
     createdAt: Date.now(),
     enabled: true,
+    viewCount: 0, // 初始化查看计数为0
     permissions,
   };
   apiKeys.push(newKey);

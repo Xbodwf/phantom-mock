@@ -24,8 +24,41 @@ export function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [codeSent, setCodeSent] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+
+  // 倒计时
+  useState(() => {
+    if (countdown > 0) {
+      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  });
+
+  const handleSendCode = async () => {
+    if (!email) {
+      setError(t('auth.emailRequired'));
+      return;
+    }
+
+    setSendingCode(true);
+    setError('');
+
+    try {
+      await axios.post('/api/auth/send-verification-code', { email });
+      setCodeSent(true);
+      setCountdown(60);
+      setError('');
+    } catch (err: any) {
+      setError(err.response?.data?.error || t('auth.sendCodeFailed'));
+    } finally {
+      setSendingCode(false);
+    }
+  };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,6 +81,7 @@ export function RegisterPage() {
         username,
         email,
         password,
+        verificationCode,
       });
 
       // 保存 token
@@ -118,6 +152,35 @@ export function RegisterPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={loading}
                 />
+
+                {/* 验证码输入 */}
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <TextField
+                    fullWidth
+                    label={t('auth.verificationCode')}
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value)}
+                    disabled={loading}
+                    placeholder={t('auth.verificationCodePlaceholder')}
+                  />
+                  <Button
+                    variant="outlined"
+                    onClick={handleSendCode}
+                    disabled={sendingCode || countdown > 0 || !email}
+                    sx={{ minWidth: 120 }}
+                  >
+                    {sendingCode ? (
+                      <CircularProgress size={20} />
+                    ) : countdown > 0 ? (
+                      t('auth.retryAfter', { seconds: countdown })
+                    ) : codeSent ? (
+                      t('auth.resendCode')
+                    ) : (
+                      t('auth.sendCode')
+                    )}
+                  </Button>
+                </Box>
+
                 <TextField
                   fullWidth
                   label={t('auth.password')}

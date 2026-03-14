@@ -41,6 +41,8 @@ import workflowRoutes from './routes/workflows.js';
 import workflowRunRoutes from './routes/workflow-runs.js';
 import openaiRoutes from './routes/openai.js';
 import { authMiddleware, adminMiddleware, errorHandler } from './middleware.js';
+import { startTCPServer, getTCPServer } from './tcpServer.js';
+import { tcpClientManager } from './tcpClient.js';
 
 // 辅助函数：获取消息内容的字符串表示
 function getContentString(content: Message['content']): string {
@@ -170,6 +172,11 @@ async function apiKeyAuthMiddleware(req: Request, res: Response, next: () => voi
     }
   }
 
+  // 将 API Key 关联的用户信息附加到请求
+  if (validKey.userId) {
+    (req as any).user = { id: validKey.userId };
+  }
+
   // 验证通过
   next();
 }
@@ -177,13 +184,13 @@ async function apiKeyAuthMiddleware(req: Request, res: Response, next: () => voi
 // ==================== 管理 API ====================
 
 // GET /api/models - 获取模型列表（管理用）
-app.get('/api/models', (req: Request, res: Response) => {
+app.get('/api/models', authMiddleware, adminMiddleware, (req: Request, res: Response) => {
   res.json({ models: getAllModels() });
 });
 
 // POST /api/models - 添加模型
-app.post('/api/models', async (req: Request, res: Response) => {
-  const { id, owned_by, description, context_length, aliases, max_output_tokens, pricing, api_key, api_base_url, supported_features, require_api_key } = req.body;
+app.post('/api/models', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  const { id, owned_by, description, context_length, aliases, max_output_tokens, pricing, api_key, api_base_url, api_type, supported_features, require_api_key } = req.body;
 
   if (!id) {
     return res.status(400).json({ error: 'Model ID is required' });
@@ -204,6 +211,7 @@ app.post('/api/models', async (req: Request, res: Response) => {
       pricing,
       api_key,
       api_base_url,
+      api_type,
       supported_features,
       require_api_key: require_api_key ?? true, // 默认需要 API Key
     });
@@ -215,9 +223,9 @@ app.post('/api/models', async (req: Request, res: Response) => {
 });
 
 // PUT /api/models/:id - 更新模型
-app.put('/api/models/:id', async (req: Request, res: Response) => {
+app.put('/api/models/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   const id = req.params.id as string;
-  const { newId, owned_by, description, context_length, aliases, max_output_tokens, pricing, api_key, api_base_url, supported_features, require_api_key } = req.body;
+  const { newId, owned_by, description, context_length, aliases, max_output_tokens, pricing, api_key, api_base_url, api_type, supported_features, require_api_key } = req.body;
 
   try {
     // 如果要修改ID，先检查新ID是否已存在
@@ -228,7 +236,7 @@ app.put('/api/models/:id', async (req: Request, res: Response) => {
     }
 
     const updated = await storageUpdateModel(id, {
-      id: newId, // 支持修改ID
+      ...(newId && newId !== id ? { id: newId } : {}), // 只在需要修改ID时才传递
       owned_by,
       description,
       context_length,
@@ -237,6 +245,7 @@ app.put('/api/models/:id', async (req: Request, res: Response) => {
       pricing,
       api_key,
       api_base_url,
+      api_type,
       supported_features,
       require_api_key,
     });
@@ -253,7 +262,7 @@ app.put('/api/models/:id', async (req: Request, res: Response) => {
 });
 
 // DELETE /api/models/:id - 删除模型
-app.delete('/api/models/:id', async (req: Request, res: Response) => {
+app.delete('/api/models/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   const id = req.params.id as string;
 
   try {
@@ -269,7 +278,7 @@ app.delete('/api/models/:id', async (req: Request, res: Response) => {
 });
 
 // GET /api/stats - 获取统计信息
-app.get('/api/stats', (req: Request, res: Response) => {
+app.get('/api/stats', authMiddleware, adminMiddleware, (req: Request, res: Response) => {
   res.json({
     pendingRequests: getPendingCount(),
     connectedClients: getConnectedClientsCount(),
@@ -278,7 +287,7 @@ app.get('/api/stats', (req: Request, res: Response) => {
 });
 
 // GET /api/settings - 获取系统设置
-app.get('/api/settings', async (req: Request, res: Response) => {
+app.get('/api/settings', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
     const settings = await getSettings();
     const serverConfig = await getServerConfig();
@@ -289,7 +298,7 @@ app.get('/api/settings', async (req: Request, res: Response) => {
 });
 
 // PUT /api/settings - 更新系统设置
-app.put('/api/settings', async (req: Request, res: Response) => {
+app.put('/api/settings', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
     const { port, ...settings } = req.body;
 
@@ -310,18 +319,54 @@ app.put('/api/settings', async (req: Request, res: Response) => {
 
 // ==================== API Key 管理 ====================
 
-// GET /api/keys - 获取所有 API Keys
-app.get('/api/keys', async (req: Request, res: Response) => {
+// GET /api/keys - 获取所有 API Keys（不包含完整 key）
+app.get('/api/keys', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
-    const keys = getAllApiKeys();
+    const keys = getAllApiKeys().map(k => ({
+      ...k,
+      key: undefined, // 不返回完整 key
+    }));
     res.json({ keys });
   } catch (e) {
     res.status(500).json({ error: 'Failed to get API keys' });
   }
 });
 
+// GET /api/keys/:id/reveal - 查看 API Key 完整内容（增加查看计数）
+app.get('/api/keys/:id/reveal', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const apiKey = getAllApiKeys().find(k => k.id === id);
+
+    if (!apiKey) {
+      return res.status(404).json({ error: 'API key not found' });
+    }
+
+    // 增加查看计数
+    const viewCount = (apiKey.viewCount || 0) + 1;
+
+    if (viewCount > 3) {
+      return res.status(403).json({
+        error: 'View limit exceeded',
+        message: '此 API Key 已超过查看次数限制（最多3次）'
+      });
+    }
+
+    await updateApiKey(id, { viewCount });
+
+    res.json({
+      success: true,
+      key: apiKey.key,
+      viewCount,
+      remainingViews: 3 - viewCount
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to reveal API key' });
+  }
+});
+
 // POST /api/keys - 创建新的 API Key
-app.post('/api/keys', async (req: Request, res: Response) => {
+app.post('/api/keys', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
     const { name, permissions } = req.body;
 
@@ -337,7 +382,7 @@ app.post('/api/keys', async (req: Request, res: Response) => {
 });
 
 // PUT /api/keys/:id - 更新 API Key
-app.put('/api/keys/:id', async (req: Request, res: Response) => {
+app.put('/api/keys/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
     const { name, enabled, permissions } = req.body;
@@ -355,7 +400,7 @@ app.put('/api/keys/:id', async (req: Request, res: Response) => {
 });
 
 // DELETE /api/keys/:id - 删除 API Key
-app.delete('/api/keys/:id', async (req: Request, res: Response) => {
+app.delete('/api/keys/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
     const deleted = await deleteApiKey(id);
@@ -1335,12 +1380,40 @@ async function start() {
   const settings = await getSettings();
   const PORT = process.env.PORT || serverConfig.port;
 
-  server.listen(PORT, () => {
+  server.listen(PORT, async () => {
     initWebSocket(server);
     console.log('========================================');
     console.log('Fake OpenAI Server 已启动');
     console.log('端口:', PORT);
     console.log('前端地址:', `http://localhost:${PORT}`);
+    console.log('========================================');
+
+    // 启动 TCP 服务器（如果启用）
+    if ((settings as any).tcpServerEnabled) {
+      try {
+        const tcpPort = (settings as any).tcpServerPort || 7144;
+        await startTCPServer(tcpPort);
+        console.log(`TCP 服务器已启动，端口: ${tcpPort}`);
+      } catch (error) {
+        console.error('TCP 服务器启动失败:', error);
+      }
+    }
+
+    // 连接 TCP 客户端（如果配置）
+    if ((settings as any).tcpClients && (settings as any).tcpClients.length > 0) {
+      for (const clientConfig of (settings as any).tcpClients) {
+        if (clientConfig.enabled) {
+          const client = tcpClientManager.addClient(
+            clientConfig.name,
+            clientConfig.host,
+            clientConfig.port
+          );
+          client.connect();
+          console.log(`TCP 客户端 ${clientConfig.name} 正在连接到 ${clientConfig.host}:${clientConfig.port}`);
+        }
+      }
+    }
+
     console.log('========================================');
     console.log('支持的 API 端点:');
     console.log('  OpenAI:');

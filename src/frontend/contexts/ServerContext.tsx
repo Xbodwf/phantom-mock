@@ -43,6 +43,21 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<SystemSettings>({ streamDelay: 500, port: 7143 });
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
 
+  const fetchModels = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const headers: HeadersInit = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const res = await fetch('/api/models', { headers });
+      const data = await res.json();
+      setModels(data.models || []);
+    } catch (error) {
+      console.error('Failed to fetch models:', error);
+    }
+  }, []);
+
   useEffect(() => {
     const connect = () => {
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -73,26 +88,29 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     connect();
 
     // Fetch initial data
-    fetch('/api/models')
-      .then(res => res.json())
-      .then(data => setModels(data.models || []))
-      .catch(console.error);
+    fetchModels();
 
-    fetch('/api/stats')
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    fetch('/api/stats', { headers })
       .then(res => res.json())
       .then(setStats)
       .catch(console.error);
 
-    fetch('/api/settings')
+    fetch('/api/settings', { headers })
       .then(res => res.json())
       .then(setSettings)
       .catch(console.error);
 
-    fetch('/api/keys')
+    fetch('/api/keys', { headers })
       .then(res => res.json())
       .then(data => setApiKeys(data.keys || []))
       .catch(console.error);
-  }, []);
+  }, [fetchModels]);
 
   const handleMessage = useCallback((msg: WSMessage) => {
     switch (msg.type) {
@@ -176,29 +194,76 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addModel = useCallback(async (model: Partial<Model> & { newId?: string }) => {
-    await fetch('/api/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(model),
-    });
-  }, []);
+    try {
+      const token = localStorage.getItem('token');
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const response = await fetch('/api/models', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(model),
+      });
+      if (response.ok) {
+        await fetchModels();
+      } else {
+        console.error('Failed to add model:', await response.text());
+      }
+    } catch (error) {
+      console.error('Error adding model:', error);
+    }
+  }, [fetchModels]);
 
   const updateModel = useCallback(async (id: string, model: Partial<Model> & { newId?: string }) => {
-    await fetch(`/api/models/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(model),
-    });
-  }, []);
+    try {
+      const token = localStorage.getItem('token');
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const response = await fetch(`/api/models/${id}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(model),
+      });
+      if (response.ok) {
+        await fetchModels();
+      } else {
+        console.error('Failed to update model:', await response.text());
+      }
+    } catch (error) {
+      console.error('Error updating model:', error);
+    }
+  }, [fetchModels]);
 
   const deleteModel = useCallback(async (id: string) => {
-    await fetch(`/api/models/${id}`, { method: 'DELETE' });
-  }, []);
+    try {
+      const token = localStorage.getItem('token');
+      const headers: HeadersInit = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const response = await fetch(`/api/models/${id}`, { method: 'DELETE', headers });
+      if (response.ok) {
+        await fetchModels();
+      } else {
+        console.error('Failed to delete model:', await response.text());
+      }
+    } catch (error) {
+      console.error('Error deleting model:', error);
+    }
+  }, [fetchModels]);
 
   const updateSettingsCallback = useCallback(async (newSettings: Partial<SystemSettings>) => {
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     const res = await fetch('/api/settings', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(newSettings),
     });
     const data = await res.json();
@@ -209,15 +274,25 @@ export function ServerProvider({ children }: { children: ReactNode }) {
 
   // API Key 管理
   const refreshApiKeys = useCallback(async () => {
-    const res = await fetch('/api/keys');
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const res = await fetch('/api/keys', { headers });
     const data = await res.json();
     setApiKeys(data.keys || []);
   }, []);
 
   const createApiKey = useCallback(async (name: string, permissions?: ApiKey['permissions']): Promise<ApiKey> => {
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     const res = await fetch('/api/keys', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ name, permissions }),
     });
     const data = await res.json();
@@ -229,16 +304,26 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   }, [refreshApiKeys]);
 
   const updateApiKeyCallback = useCallback(async (id: string, updates: Partial<ApiKey>) => {
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     await fetch(`/api/keys/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(updates),
     });
     await refreshApiKeys();
   }, [refreshApiKeys]);
 
   const deleteApiKeyCallback = useCallback(async (id: string) => {
-    await fetch(`/api/keys/${id}`, { method: 'DELETE' });
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    await fetch(`/api/keys/${id}`, { method: 'DELETE', headers });
     await refreshApiKeys();
   }, [refreshApiKeys]);
 

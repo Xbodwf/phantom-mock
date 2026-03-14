@@ -5,6 +5,15 @@ import { CircularProgress, Box } from '@mui/material'
 import App from './App.tsx'
 import './i18n' // 初始化 i18n
 
+// 引入字体
+import '@fontsource/lexend/400.css'
+import '@fontsource/lexend/500.css'
+import '@fontsource/lexend/600.css'
+import '@fontsource/lexend/700.css'
+import '@fontsource/noto-sans-sc/400.css'
+import '@fontsource/noto-sans-sc/500.css'
+import '@fontsource/noto-sans-sc/700.css'
+
 // 配置 axios 默认请求头
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')

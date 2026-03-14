@@ -137,7 +137,7 @@ export function UserDashboard() {
           <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
             <Button
               variant="contained"
-              onClick={() => navigate('/api-keys')}
+              onClick={() => navigate('/keys')}
             >
               {t('dashboard.manageApiKeys')}
             </Button>
@@ -192,7 +192,7 @@ export function UserDashboard() {
             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
               <Typography color="textSecondary">{t('common.status')}:</Typography>
               <Typography sx={{ color: user?.enabled ? 'success.main' : 'error.main' }}>
-                {user?.enabled ? t('common.active') : t('admin.disable')}
+                {user?.enabled ? t('common.active') : t('common.disabled')}
               </Typography>
             </Box>
           </Stack>

@@ -1,15 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChunk, ModelsResponse } from './types.js';
-
-// 估算 token 数
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
+import { calculateTokens } from './billing.js';
 
 // 构建非流式响应
 export function buildResponse(content: string, model: string, requestId?: string, promptContent?: string): ChatCompletionResponse {
-  const promptTokens = promptContent ? estimateTokens(promptContent) : 0;
-  const completionTokens = estimateTokens(content);
+  const promptTokens = promptContent ? calculateTokens(promptContent, model) : 0;
+  const completionTokens = calculateTokens(content, model);
 
   return {
     id: requestId || `chatcmpl-${uuidv4().replace(/-/g, '')}`,

@@ -1,16 +1,66 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { hashPassword, verifyPassword, generateToken, generateRefreshToken, verifyRefreshToken } from '../auth.js';
-import { createUser, getUserByUsername, getUserByEmail, updateUser } from '../storage.js';
+import { createUser, getUserByUsername, getUserByEmail, updateUser, getSettings } from '../storage.js';
 import { authMiddleware, AuthRequest } from '../middleware.js';
+import { generateVerificationCode, sendVerificationEmail, storeVerificationCode, verifyCode } from '../email.js';
 
 const router: Router = Router();
+
+/**
+ * 发送验证码
+ */
+router.post('/send-verification-code', async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // 检查邮箱格式
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+
+    // 检查邮箱是否已被注册
+    if (getUserByEmail(email)) {
+      return res.status(409).json({ error: 'Email already exists' });
+    }
+
+    const settings = await getSettings();
+
+    // 如果未启用邮箱验证，直接返回成功
+    if (!settings.emailVerificationEnabled) {
+      return res.json({ success: true, message: 'Email verification is disabled' });
+    }
+
+    // 生成验证码
+    const code = generateVerificationCode();
+
+    // 发送邮件
+    const sent = await sendVerificationEmail(email, code);
+
+    if (!sent) {
+      return res.status(500).json({ error: 'Failed to send verification email' });
+    }
+
+    // 存储验证码
+    storeVerificationCode(email, code);
+
+    res.json({ success: true, message: 'Verification code sent' });
+  } catch (error) {
+    console.error('[Send Verification Code Error]', error);
+    res.status(500).json({ error: 'Failed to send verification code' });
+  }
+});
 
 /**
  * 用户注册
  */
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { username, email, password } = req.body;
+    const { username, email, password, verificationCode } = req.body;
 
     // 验证输入
     if (!username || !email || !password) {
@@ -28,6 +78,19 @@ router.post('/register', async (req: Request, res: Response) => {
 
     if (getUserByEmail(email)) {
       return res.status(409).json({ error: 'Email already exists' });
+    }
+
+    // 检查是否需要邮箱验证
+    const settings = await getSettings();
+    if (settings.emailVerificationEnabled) {
+      if (!verificationCode) {
+        return res.status(400).json({ error: 'Verification code is required' });
+      }
+
+      // 验证验证码
+      if (!verifyCode(email, verificationCode)) {
+        return res.status(400).json({ error: 'Invalid or expired verification code' });
+      }
     }
 
     // 创建用户
@@ -57,6 +120,10 @@ router.post('/register', async (req: Request, res: Response) => {
         username: user.username,
         email: user.email,
         role: user.role,
+        balance: user.balance,
+        enabled: user.enabled,
+        totalUsage: user.totalUsage,
+        createdAt: user.createdAt,
       },
       token,
       refreshToken,
@@ -111,6 +178,9 @@ router.post('/login', async (req: Request, res: Response) => {
         email: user.email,
         role: user.role,
         balance: user.balance,
+        enabled: user.enabled,
+        totalUsage: user.totalUsage,
+        createdAt: user.createdAt,
       },
       token,
       refreshToken,

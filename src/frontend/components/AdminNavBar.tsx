@@ -34,6 +34,7 @@ export function AdminNavBar() {
     { label: t('nav.dashboard'), path: '/console/dashboard' },
     { label: t('nav.models'), path: '/console/models' },
     { label: t('nav.users'), path: '/console/users' },
+    { label: t('nav.loginSettings'), path: '/console/settings' },
   ];
 
   const handleLogout = () => {

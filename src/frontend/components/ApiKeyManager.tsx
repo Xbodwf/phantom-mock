@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Box,
   Button,
@@ -22,21 +22,75 @@ import {
   ListItemSecondaryAction,
   Divider,
 } from '@mui/material';
-import { Key, Plus, Trash2, Copy, Calendar, Clock } from 'lucide-react';
+import { Key, Plus, Trash2, Copy, Calendar, Clock, Eye, Edit2 } from 'lucide-react';
 import { useServer } from '../contexts/ServerContext';
+import { ApiKeyEditDialog } from './ApiKeyEditDialog';
+import type { ApiKey } from '../types';
+import axios from 'axios';
 
 export default function ApiKeyManager() {
-  const { apiKeys, createApiKey, updateApiKey, deleteApiKey } = useServer();
+  const { apiKeys, createApiKey, updateApiKey, deleteApiKey, models } = useServer();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
   const [newKey, setNewKey] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<string | null>(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [selectedKey, setSelectedKey] = useState<ApiKey | null>(null);
+  const [actions, setActions] = useState<Array<{ id: string; name: string }>>([]);
+  const [revealedKeys, setRevealedKeys] = useState<Record<string, { key: string; remainingViews: number }>>({});
+
+  useEffect(() => {
+    fetchActions();
+  }, []);
+
+  const fetchActions = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get('/api/actions', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      setActions(response.data);
+    } catch (e) {
+      console.error('Failed to fetch actions:', e);
+    }
+  };
+
+  const handleRevealKey = async (id: string) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`/api/keys/${id}/reveal`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      setRevealedKeys(prev => ({
+        ...prev,
+        [id]: { key: response.data.key, remainingViews: response.data.remainingViews }
+      }));
+      setSnackbar(`密钥已显示，剩余查看次数: ${response.data.remainingViews}`);
+    } catch (e: any) {
+      if (e.response?.status === 403) {
+        setSnackbar('查看次数已用完');
+      } else {
+        setSnackbar('查看失败');
+      }
+    }
+  };
+
+  const handleEditKey = (key: ApiKey) => {
+    setSelectedKey(key);
+    setEditDialogOpen(true);
+  };
+
+  const handleSaveEdit = async (id: string, updates: Partial<ApiKey>) => {
+    await updateApiKey(id, updates);
+    setEditDialogOpen(false);
+    setSnackbar('已更新');
+  };
 
   const handleCreateKey = async () => {
     if (!newKeyName.trim()) return;
     try {
-      const key = await createApiKey(newKeyName.trim());
-      setNewKey(key.key); // 显示完整的 key（只有这一次机会）
+      const apiKey = await createApiKey(newKeyName.trim());
+      setNewKey(apiKey.key || ''); // 显示完整的 key（首次创建不计入查看次数）
       setNewKeyName('');
       setDialogOpen(false);
     } catch (e) {
@@ -101,7 +155,12 @@ export default function ApiKeyManager() {
             {apiKeys.map((key, index) => (
               <Box key={key.id}>
                 {index > 0 && <Divider />}
-                <ListItem sx={{ py: 2 }}>
+                <ListItem
+                  sx={{
+                    py: 2,
+                    pr: 25, // 给右侧按钮留出足够空间
+                  }}
+                >
                   <ListItemText
                     primary={
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -118,7 +177,7 @@ export default function ApiKeyManager() {
                     secondary={
                       <Box sx={{ mt: 1 }}>
                         <Typography variant="body2" sx={{ fontFamily: 'monospace', mb: 0.5 }}>
-                          {key.key}
+                          {revealedKeys[key.id] ? revealedKeys[key.id].key : '••••••••••••••••'}
                         </Typography>
                         <Box sx={{ display: 'flex', gap: 2, color: 'text.secondary', fontSize: '0.75rem' }}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -131,12 +190,34 @@ export default function ApiKeyManager() {
                               最后使用: {formatDate(key.lastUsedAt)}
                             </Box>
                           )}
+                          {key.viewCount !== undefined && (
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              <Eye size={12} />
+                              已查看: {key.viewCount}/3
+                            </Box>
+                          )}
                         </Box>
                       </Box>
                     }
                   />
                   <ListItemSecondaryAction>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {!revealedKeys[key.id] && (key.viewCount || 0) < 3 && (
+                        <IconButton
+                          size="small"
+                          onClick={() => handleRevealKey(key.id)}
+                          title="查看密钥"
+                        >
+                          <Eye size={18} />
+                        </IconButton>
+                      )}
+                      <IconButton
+                        size="small"
+                        onClick={() => handleEditKey(key)}
+                        title="编辑权限"
+                      >
+                        <Edit2 size={18} />
+                      </IconButton>
                       <FormControlLabel
                         control={
                           <Switch
@@ -190,7 +271,7 @@ export default function ApiKeyManager() {
         <DialogTitle>密钥已创建</DialogTitle>
         <DialogContent>
           <Alert severity="warning" sx={{ mb: 2 }}>
-            请立即复制并保存此密钥，关闭后将无法再次查看完整密钥！
+            请立即复制并保存此密钥，您还有 3 次查看机会！
           </Alert>
           <Box
             sx={{
@@ -224,6 +305,16 @@ export default function ApiKeyManager() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* 编辑密钥权限对话框 */}
+      <ApiKeyEditDialog
+        open={editDialogOpen}
+        apiKey={selectedKey}
+        models={models}
+        actions={actions}
+        onClose={() => setEditDialogOpen(false)}
+        onSave={handleSaveEdit}
+      />
 
       <Snackbar
         open={!!snackbar}

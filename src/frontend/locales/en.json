@@ -22,7 +22,8 @@
     "no": "No",
     "role": "Role",
     "user": "User",
-    "admin": "Admin"
+    "admin": "Admin",
+    "never": "Never"
   },
   "auth": {
     "login": "Login",
@@ -42,7 +43,14 @@
     "loginFailed": "Login failed",
     "registerFailed": "Registration failed",
     "passwordMismatch": "Passwords do not match",
-    "passwordTooShort": "Password must be at least 6 characters"
+    "passwordTooShort": "Password must be at least 6 characters",
+    "verificationCode": "Verification Code",
+    "verificationCodePlaceholder": "Enter email verification code",
+    "sendCode": "Send Code",
+    "resendCode": "Resend",
+    "retryAfter": "Retry after {{seconds}}s",
+    "emailRequired": "Please enter email",
+    "sendCodeFailed": "Failed to send verification code"
   },
   "nav": {
     "home": "Home",
@@ -50,8 +58,10 @@
     "dashboard": "Dashboard",
     "models": "Models",
     "users": "Users",
+    "requests": "Request Queue",
     "adminConsole": "Admin Console",
-    "adminMenu": "Admin Menu"
+    "adminMenu": "Admin Menu",
+    "loginSettings": "Login Settings"
   },
   "userNav": {
     "dashboard": "Dashboard",
@@ -60,6 +70,7 @@
     "billing": "Billing",
     "profile": "Profile",
     "actions": "Actions",
+    "requests": "Request Queue",
     "adminConsole": "Admin Console"
   },
   "adminNav": {
@@ -114,7 +125,43 @@
     "noDescription": "No description available",
     "context": "Context",
     "preview": "Preview",
-    "select": "Select"
+    "select": "Select",
+    "manager": {
+      "totalModels": "{{count}} models total",
+      "addModel": "Add Model",
+      "editModel": "Edit Model",
+      "confirmDelete": "Are you sure you want to delete model {{id}}?",
+      "basicInfo": "Basic Info",
+      "advancedSettings": "Advanced Settings",
+      "modelId": "Model ID",
+      "modelIdPlaceholder": "e.g., gpt-4",
+      "providerPlaceholder": "e.g., openai",
+      "descriptionPlaceholder": "Model description",
+      "contextLength": "Context Length",
+      "contextLengthPlaceholder": "e.g., 128K or 128000",
+      "maxOutputTokens": "Max Output Tokens",
+      "aliases": "Aliases",
+      "aliasesPlaceholder": "e.g., gpt4, chatgpt",
+      "aliasesHelper": "Separate multiple aliases with commas",
+      "advancedInfo": "Configure forwarding, pricing, and features",
+      "pricingTitle": "Pricing Configuration",
+      "pricingType": "Pricing Type",
+      "pricingByToken": "By Token",
+      "pricingByRequest": "By Request",
+      "inputPrice": "Input Price ($/1K tokens)",
+      "outputPrice": "Output Price ($/1K tokens)",
+      "pricePerRequest": "Price Per Request ($)",
+      "pricePerRequestHelper": "Fixed cost per API call",
+      "apiConfig": "API Forwarding Configuration",
+      "apiType": "API Type",
+      "customApi": "Custom",
+      "apiKey": "API Key",
+      "apiBaseUrl": "API Base URL",
+      "apiBaseUrlHelper": "Leave empty to simulate responses without forwarding",
+      "supportedFeatures": "Supported Features",
+      "featuresPlaceholder": "e.g., chat, vision, function_calling",
+      "configuredApiKey": "Forwarding Configured"
+    }
   },
   "admin": {
     "console": "Admin Console",
@@ -146,7 +193,29 @@
     "balance": "Balance",
     "enable": "Enable",
     "disable": "Disable",
-    "confirmDeleteUser": "Are you sure you want to delete this user?"
+    "confirmDeleteUser": "Are you sure you want to delete this user?",
+    "loginSettings": "Login Settings",
+    "loginSettingsDesc": "Configure user registration and login settings",
+    "emailVerification": "Email Verification",
+    "enableEmailVerification": "Enable Email Verification",
+    "emailVerificationHelper": "When enabled, users must verify their email during registration",
+    "emailjsConfig": "EmailJS Configuration",
+    "emailjsConfigDesc": "Use EmailJS to send verification code emails. Please visit EmailJS website to register and get configuration.",
+    "serviceId": "Service ID",
+    "templateId": "Template ID",
+    "publicKey": "Public Key",
+    "privateKey": "Private Key",
+    "serviceIdHelper": "EmailJS Service ID",
+    "templateIdHelper": "EmailJS Template ID",
+    "publicKeyHelper": "EmailJS Public Key",
+    "privateKeyHelper": "EmailJS Private Key",
+    "templateInstructions": "EmailJS Template Configuration Instructions",
+    "templateVariables": "In your EmailJS template, use the following variables:",
+    "templateExample": "Example template content:",
+    "settingsSaved": "Settings saved",
+    "saving": "Saving...",
+    "saveSettings": "Save Settings",
+    "back": "Back"
   },
   "user": {
     "profile": "Profile",
@@ -236,5 +305,11 @@
     "failedToUpdate": "Failed to update",
     "failedToDelete": "Failed to delete",
     "confirmDelete": "Are you sure you want to delete this?"
+  },
+  "requests": {
+    "description": "Simulate AI responses and handle API requests",
+    "noRequests": "No requests",
+    "waitingForRequests": "Waiting for requests...",
+    "requestWillAppear": "Requests will appear here when API calls are made"
   }
 }

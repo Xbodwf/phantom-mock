@@ -77,9 +77,12 @@ export interface Model {
     input?: number; // 输入每1K token价格（美元）
     output?: number; // 输出每1K token价格（美元）
     unit?: 'K' | 'M'; // 价格单位（K=千，M=百万）
+    type?: 'token' | 'request'; // 计费类型：按 token 或按请求
+    perRequest?: number; // 按请求计费时的单价（美元）
   };
   api_key?: string; // 模型关联的API密钥（用于转发）
   api_base_url?: string; // API基础URL（用于转发）
+  api_type?: 'openai' | 'anthropic' | 'google' | 'azure' | 'custom'; // API接口类型（用于转发）
   supported_features?: string[]; // 支持的特性，如 ['chat', 'vision', 'function_calling']
   require_api_key?: boolean; // 是否需要API Key才能访问（默认true）
   // 组合模型字段
@@ -106,9 +109,13 @@ export interface ApiKey {
   lastUsedAt?: number;
   expiresAt?: number;              // 过期时间（新增）
   enabled: boolean;
+  viewCount?: number;              // 查看次数（新增）
   // 权限配置
   permissions?: {
     models?: string[]; // 允许访问的模型列表，空数组表示所有模型
+    modelsMode?: 'whitelist' | 'blacklist'; // 模型访问模式：白名单或黑名单
+    actions?: string[]; // 允许访问的 Action 列表
+    actionsMode?: 'whitelist' | 'blacklist'; // Action 访问模式：白名单或黑名单
     endpoints?: string[]; // 允许访问的端点类型 ['chat', 'image', 'video', 'embeddings']
     rateLimit?: number;            // 每分钟请求数限制（新增）
   };
@@ -488,4 +495,21 @@ export interface SystemSettings {
   requireApiKey?: boolean; // 全局是否需要API Key（默认false）
   smoothOutput?: boolean; // 平滑输出模式（默认false）
   smoothSpeed?: number; // 平滑输出速度，字符/秒（默认20）
+  port?: number; // HTTP 服务器端口
+  tcpServerEnabled?: boolean; // 是否启用 TCP 服务器
+  tcpServerPort?: number; // TCP 服务器端口
+  tcpClients?: Array<{
+    name: string;
+    host: string;
+    port: number;
+    enabled: boolean;
+  }>; // TCP 客户端配置
+  // 邮箱验证配置
+  emailVerificationEnabled?: boolean; // 是否启用邮箱验证（默认false）
+  emailjs?: {
+    serviceId: string; // EmailJS Service ID
+    templateId: string; // EmailJS Template ID
+    publicKey: string; // EmailJS Public Key
+    privateKey: string; // EmailJS Private Key
+  };
 }
