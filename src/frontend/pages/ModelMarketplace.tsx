@@ -41,6 +41,7 @@ export function ModelMarketplace({ models, onSelectModel }: ModelMarketplaceProp
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
 
   // 获取唯一的提供商
   const providers = useMemo(() => {
@@ -160,73 +161,14 @@ export function ModelMarketplace({ models, onSelectModel }: ModelMarketplaceProp
             }}
           />
 
-          {/* 过滤器 */}
-          <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
-            <FormControl sx={{ minWidth: 150 }}>
-              <InputLabel>{t('models.category')}</InputLabel>
-              <Select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                label={t('models.category')}
-              >
-                <MenuItem value="all">{t('models.allCategories')}</MenuItem>
-                {categories.map((cat) => (
-                  <MenuItem key={cat} value={cat}>
-                    {cat}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            <FormControl sx={{ minWidth: 150 }}>
-              <InputLabel>{t('models.provider')}</InputLabel>
-              <Select
-                value={selectedProvider}
-                onChange={(e) => setSelectedProvider(e.target.value)}
-                label={t('models.provider')}
-              >
-                <MenuItem value="all">{t('models.allProviders')}</MenuItem>
-                {providers.map((provider) => (
-                  <MenuItem key={provider} value={provider}>
-                    {provider}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            <FormControl sx={{ minWidth: 150 }}>
-              <InputLabel>{t('models.feature')}</InputLabel>
-              <Select
-                value={selectedFeature}
-                onChange={(e) => setSelectedFeature(e.target.value)}
-                label={t('models.feature')}
-              >
-                <MenuItem value="all">{t('models.allFeatures')}</MenuItem>
-                {allFeatures.map((feature) => (
-                  <MenuItem key={feature} value={feature}>
-                    {feature}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            <FormControl sx={{ minWidth: 150 }}>
-              <InputLabel>{t('models.priceRange')}</InputLabel>
-              <Select
-                value={`${priceRange[0]}-${priceRange[1]}`}
-                onChange={(e) => {
-                  const [min, max] = e.target.value.split('-').map(Number);
-                  setPriceRange([min, max]);
-                }}
-                label={t('models.priceRange')}
-              >
-                <MenuItem value="0-1">{t('models.allPrices')}</MenuItem>
-                <MenuItem value="0-0.1">Free - $0.1</MenuItem>
-                <MenuItem value="0.1-0.5">$0.1 - $0.5</MenuItem>
-                <MenuItem value="0.5-1">$0.5 - $1</MenuItem>
-              </Select>
-            </FormControl>
-
+          {/* 筛选按钮和清除按钮 */}
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Button
+              variant="outlined"
+              onClick={() => setFilterDialogOpen(true)}
+            >
+              {t('models.filter')}
+            </Button>
             {hasActiveFilters && (
               <Button
                 variant="outlined"
@@ -371,6 +313,92 @@ export function ModelMarketplace({ models, onSelectModel }: ModelMarketplaceProp
         message={t('models.copiedToClipboard')}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       />
+
+      {/* 筛选对话框 */}
+      <Dialog open={filterDialogOpen} onClose={() => setFilterDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{t('models.filter')}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={3} sx={{ mt: 2 }}>
+            {/* 分类 */}
+            <FormControl fullWidth>
+              <InputLabel>{t('models.category')}</InputLabel>
+              <Select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                label={t('models.category')}
+              >
+                <MenuItem value="all">{t('models.allCategories')}</MenuItem>
+                {categories.map((cat) => (
+                  <MenuItem key={cat} value={cat}>
+                    {cat}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            {/* 提供商 */}
+            <FormControl fullWidth>
+              <InputLabel>{t('models.provider')}</InputLabel>
+              <Select
+                value={selectedProvider}
+                onChange={(e) => setSelectedProvider(e.target.value)}
+                label={t('models.provider')}
+              >
+                <MenuItem value="all">{t('models.allProviders')}</MenuItem>
+                {providers.map((provider) => (
+                  <MenuItem key={provider} value={provider}>
+                    {provider}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            {/* 能力/特性 */}
+            <FormControl fullWidth>
+              <InputLabel>{t('models.feature')}</InputLabel>
+              <Select
+                value={selectedFeature}
+                onChange={(e) => setSelectedFeature(e.target.value)}
+                label={t('models.feature')}
+              >
+                <MenuItem value="all">{t('models.allFeatures')}</MenuItem>
+                {allFeatures.map((feature) => (
+                  <MenuItem key={feature} value={feature}>
+                    {feature}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            {/* 价格范围 */}
+            <FormControl fullWidth>
+              <InputLabel>{t('models.priceRange')}</InputLabel>
+              <Select
+                value={`${priceRange[0]}-${priceRange[1]}`}
+                onChange={(e) => {
+                  const [min, max] = e.target.value.split('-').map(Number);
+                  setPriceRange([min, max]);
+                }}
+                label={t('models.priceRange')}
+              >
+                <MenuItem value="0-1">{t('models.allPrices')}</MenuItem>
+                <MenuItem value="0-0.1">Free - 🔮0.1</MenuItem>
+                <MenuItem value="0.1-0.5">🔮0.1 - 🔮0.5</MenuItem>
+                <MenuItem value="0.5-1">🔮0.5 - 🔮1</MenuItem>
+              </Select>
+            </FormControl>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setFilterDialogOpen(false)}>{t('common.cancel')}</Button>
+          <Button
+            variant="contained"
+            onClick={() => setFilterDialogOpen(false)}
+          >
+            {t('common.confirm')}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 }

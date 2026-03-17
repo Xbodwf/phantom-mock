@@ -113,6 +113,7 @@
     "allCategories": "所有分类",
     "allProviders": "所有提供商",
     "allPrices": "所有价格",
+    "filter": "筛选",
     "clearFilters": "清除筛选",
     "showing": "显示 {{count}} / {{total}} 个模型",
     "noModels": "未找到模型",

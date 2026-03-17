@@ -124,6 +124,7 @@
     "allCategories": "All Categories",
     "allProviders": "All Providers",
     "allPrices": "All Prices",
+    "filter": "Filter",
     "clearFilters": "Clear Filters",
     "showing": "Showing {{count}} of {{total}} models",
     "noModels": "No models found",
