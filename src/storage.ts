@@ -491,11 +491,15 @@ export async function createUsageRecord(record: Omit<UsageRecord, 'id'>): Promis
 }
 
 export function getUserUsageRecords(userId: string): UsageRecord[] {
-  return usageRecords.filter(r => r.userId === userId);
+  // 只返回对应的有效 API Key 的使用记录
+  const validApiKeyIds = new Set(apiKeys.map(k => k.id));
+  return usageRecords.filter(r => r.userId === userId && validApiKeyIds.has(r.apiKeyId));
 }
 
 export function getUsageRecordsByDateRange(userId: string, startTime: number, endTime: number): UsageRecord[] {
-  return usageRecords.filter(r => r.userId === userId && r.timestamp >= startTime && r.timestamp <= endTime);
+  // 只返回对应的有效 API Key 的使用记录
+  const validApiKeyIds = new Set(apiKeys.map(k => k.id));
+  return usageRecords.filter(r => r.userId === userId && r.timestamp >= startTime && r.timestamp <= endTime && validApiKeyIds.has(r.apiKeyId));
 }
 
 // ==================== 账单管理 ====================
