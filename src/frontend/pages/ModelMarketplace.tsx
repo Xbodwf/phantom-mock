@@ -97,8 +97,10 @@ export function ModelMarketplace({ models, onSelectModel }: ModelMarketplaceProp
       }
 
       // 价格过滤
-      const inputPrice = model.pricing?.input || 0;
-      if (inputPrice < priceRange[0] || inputPrice > priceRange[1]) {
+      const modelPrice = model.pricing?.type === 'request'
+        ? (model.pricing?.perRequest || 0)
+        : (model.pricing?.input || 0);
+      if (modelPrice < priceRange[0] || modelPrice > priceRange[1]) {
         return false;
       }
 
@@ -243,15 +245,23 @@ export function ModelMarketplace({ models, onSelectModel }: ModelMarketplaceProp
                         {t('models.details.pricing')}
                       </Typography>
                       <Stack spacing={0.5}>
-                        {selectedModel.pricing.input && (
+                        {selectedModel.pricing.type === 'request' && selectedModel.pricing.perRequest ? (
                           <Typography variant="body2">
-                            {t('models.details.input')}: {formatCurrency(selectedModel.pricing.input)}/{selectedModel.pricing.unit || 'K'} {t('models.details.tokens')}
+                            {formatCurrency(selectedModel.pricing.perRequest)}/request
                           </Typography>
-                        )}
-                        {selectedModel.pricing.output && (
-                          <Typography variant="body2">
-                            {t('models.details.output')}: {formatCurrency(selectedModel.pricing.output)}/{selectedModel.pricing.unit || 'K'} {t('models.details.tokens')}
-                          </Typography>
+                        ) : (
+                          <>
+                            {selectedModel.pricing.input && (
+                              <Typography variant="body2">
+                                {t('models.details.input')}: {formatCurrency(selectedModel.pricing.input)}/{selectedModel.pricing.unit || 'K'} {t('models.details.tokens')}
+                              </Typography>
+                            )}
+                            {selectedModel.pricing.output && (
+                              <Typography variant="body2">
+                                {t('models.details.output')}: {formatCurrency(selectedModel.pricing.output)}/{selectedModel.pricing.unit || 'K'} {t('models.details.tokens')}
+                              </Typography>
+                            )}
+                          </>
                         )}
                       </Stack>
                     </Box>

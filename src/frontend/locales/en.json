@@ -328,6 +328,10 @@
     "dueDate": "Due Date",
     "noInvoices": "No invoices yet",
     "billingInformation": "Billing Information",
+    "prepaidModel": "Your account uses a pre-paid model. You need to maintain a positive balance to use the API.",
+    "apiRequestDeduction": "Each API request will deduct the corresponding cost from your balance based on token usage.",
+    "invoicesGenerated": "Invoices are generated monthly and show your usage and costs for that period.",
+    "contactSupport": "Contact support if you need to add funds or have questions about your billing.",
     "created": "Created",
     "status": "Status"
   },
@@ -378,7 +382,8 @@
     "fieldName": "Field Name",
     "fieldValue": "Field Value",
     "documentation": "Documentation",
-    "sandboxDocumentation": "Sandbox API Documentation"
+    "sandboxDocumentation": "Sandbox API Documentation",
+    "commaSeparatedTags": "Comma-separated tags"
   },
   "errors": {
     "failedToLoad": "Failed to load",

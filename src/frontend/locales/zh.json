@@ -305,7 +305,11 @@
     "usage": "使用量（Tokens）",
     "dueDate": "到期日期",
     "noInvoices": "暂无发票",
-    "billingInformation": "账单信息"
+    "billingInformation": "账单信息",
+    "prepaidModel": "您的账户使用预付款模式。您需要保持正余额才能使用 API。",
+    "apiRequestDeduction": "每个 API 请求将根据 token 使用情况从您的余额中扣除相应费用。",
+    "invoicesGenerated": "发票每月生成一次，显示该期间的使用情况和成本。",
+    "contactSupport": "如果您需要添加资金或对账单有疑问，请联系支持。"
   },
   "actions": {
     "title": "Actions",
@@ -354,7 +358,8 @@
     "fieldName": "字段名称",
     "fieldValue": "字段值",
     "documentation": "文档",
-    "sandboxDocumentation": "沙箱 API 文档"
+    "sandboxDocumentation": "沙箱 API 文档",
+    "commaSeparatedTags": "用逗号分隔的标签"
   },
   "errors": {
     "failedToLoad": "加载失败",

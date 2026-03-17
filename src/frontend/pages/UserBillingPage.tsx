@@ -167,16 +167,16 @@ export function UserBillingPage() {
             {t('billing.billingInformation')}
           </Typography>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            • Your account uses a pre-paid model. You need to maintain a positive balance to use the API.
+            • {t('billing.prepaidModel')}
           </Typography>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            • Each API request will deduct the corresponding cost from your balance based on token usage.
+            • {t('billing.apiRequestDeduction')}
           </Typography>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            • Invoices are generated monthly and show your usage and costs for that period.
+            • {t('billing.invoicesGenerated')}
           </Typography>
           <Typography variant="body2">
-            • Contact support if you need to add funds or have questions about your billing.
+            • {t('billing.contactSupport')}
           </Typography>
         </CardContent>
       </Card>

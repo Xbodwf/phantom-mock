@@ -345,7 +345,7 @@ export function ActionEditorPage() {
                         }
                         fullWidth
                         size="small"
-                        helperText="Comma-separated tags"
+                        helperText={t('actions.commaSeparatedTags')}
                       />
                     </Box>
                   </Box>

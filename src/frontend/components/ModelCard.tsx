@@ -22,8 +22,11 @@ interface ModelCardProps {
 export function ModelCard({ model, onSelect, onPreview }: ModelCardProps) {
   const { t } = useTranslation();
 
-  const formatPrice = (price?: number, unit?: string) => {
+  const formatPrice = (price?: number, unit?: string, type?: string) => {
     if (!price) return t('models.free');
+    if (type === 'request') {
+      return `${formatCurrency(price)}/request`;
+    }
     const unitLabel = unit === 'M' ? '/M tokens' : '/K tokens';
     return `${formatCurrency(price)}${unitLabel}`;
   };
@@ -88,15 +91,23 @@ export function ModelCard({ model, onSelect, onPreview }: ModelCardProps) {
 
         {/* 价格信息 */}
         <Stack spacing={0.5} sx={{ mb: 2 }}>
-          {model.pricing?.input && (
+          {model.pricing?.type === 'request' && model.pricing?.perRequest ? (
             <Typography variant="caption">
-              {t('models.details.input')}: {formatPrice(model.pricing.input, model.pricing.unit)}
+              {t('models.details.pricing')}: {formatPrice(model.pricing.perRequest, undefined, 'request')}
             </Typography>
-          )}
-          {model.pricing?.output && (
-            <Typography variant="caption">
-              {t('models.details.output')}: {formatPrice(model.pricing.output, model.pricing.unit)}
-            </Typography>
+          ) : (
+            <>
+              {model.pricing?.input && (
+                <Typography variant="caption">
+                  {t('models.details.input')}: {formatPrice(model.pricing.input, model.pricing.unit)}
+                </Typography>
+              )}
+              {model.pricing?.output && (
+                <Typography variant="caption">
+                  {t('models.details.output')}: {formatPrice(model.pricing.output, model.pricing.unit)}
+                </Typography>
+              )}
+            </>
           )}
         </Stack>
 
