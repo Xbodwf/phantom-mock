@@ -5,13 +5,29 @@ import { toEntity, toEntities } from './utils';
 
 const COLLECTION_NAME = 'models';
 
-export async function createModel(model: Omit<Model, 'id'> & { _id?: ObjectId }): Promise<Model> {
+// 创建模型索引
+export async function createModelIndexes(): Promise<void> {
+  const db = getDB();
+  const collection = db.collection(COLLECTION_NAME);
+  
+  // 创建唯一索引确保模型 ID 唯一
+  await collection.createIndex({ id: 1 }, { unique: true });
+  // 创建其他常用查询索引
+  await collection.createIndex({ owned_by: 1 });
+  await collection.createIndex({ category: 1 });
+  await collection.createIndex({ ownerId: 1 });
+  await collection.createIndex({ isPublic: 1 });
+}
+
+export async function createModel(model: Omit<Model, 'id'> & { id: string }): Promise<Model> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
 
   const doc = {
     ...model,
-    _id: model._id || new ObjectId(),
+    _id: new ObjectId(),
+    created: model.created || Date.now(),
+    object: 'model',
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -20,24 +36,30 @@ export async function createModel(model: Omit<Model, 'id'> & { _id?: ObjectId })
   return toEntity<Model>(doc);
 }
 
-export async function getModel(id: string): Promise<Model | null> {
+// 通过模型 ID（字符串）获取模型
+export async function getModelById(id: string): Promise<Model | null> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
 
-  const doc = await collection.findOne({ _id: new ObjectId(id) });
+  const doc = await collection.findOne({ id });
+  if (!doc) return null;
+
+  return toEntity<Model>(doc);
+}
+
+// 通过 MongoDB ObjectId 获取模型
+export async function getModel(objectId: string): Promise<Model | null> {
+  const db = getDB();
+  const collection = db.collection(COLLECTION_NAME);
+
+  const doc = await collection.findOne({ _id: new ObjectId(objectId) });
   if (!doc) return null;
 
   return toEntity<Model>(doc);
 }
 
 export async function getModelByName(name: string): Promise<Model | null> {
-  const db = getDB();
-  const collection = db.collection(COLLECTION_NAME);
-
-  const doc = await collection.findOne({ id: name });
-  if (!doc) return null;
-
-  return toEntity<Model>(doc);
+  return getModelById(name);
 }
 
 export async function getAllModels(): Promise<Model[]> {
@@ -48,12 +70,13 @@ export async function getAllModels(): Promise<Model[]> {
   return toEntities<Model>(docs);
 }
 
-export async function updateModel(id: string, updates: Partial<Model>): Promise<Model | null> {
+// 通过模型 ID（字符串）更新模型
+export async function updateModelById(id: string, updates: Partial<Model>): Promise<Model | null> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
 
   const result = await collection.findOneAndUpdate(
-    { _id: new ObjectId(id) },
+    { id },
     {
       $set: {
         ...updates,
@@ -68,12 +91,103 @@ export async function updateModel(id: string, updates: Partial<Model>): Promise<
   return toEntity<Model>(result.value);
 }
 
-export async function deleteModel(id: string): Promise<boolean> {
+// 通过 MongoDB ObjectId 更新模型
+export async function updateModel(objectId: string, updates: Partial<Model>): Promise<Model | null> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
 
-  const result = await collection.deleteOne({ _id: new ObjectId(id) });
+  const result = await collection.findOneAndUpdate(
+    { _id: new ObjectId(objectId) },
+    {
+      $set: {
+        ...updates,
+        updatedAt: new Date(),
+      },
+    },
+    { returnDocument: 'after' }
+  );
+
+  if (!result || !result.value) return null;
+
+  return toEntity<Model>(result.value);
+}
+
+// 通过模型 ID（字符串）删除模型
+export async function deleteModelById(id: string): Promise<boolean> {
+  const db = getDB();
+  const collection = db.collection(COLLECTION_NAME);
+
+  const result = await collection.deleteOne({ id });
   return result.deletedCount > 0;
+}
+
+// 通过 MongoDB ObjectId 删除模型
+export async function deleteModel(objectId: string): Promise<boolean> {
+  const db = getDB();
+  const collection = db.collection(COLLECTION_NAME);
+
+  const result = await collection.deleteOne({ _id: new ObjectId(objectId) });
+  return result.deletedCount > 0;
+}
+
+// 更新模型评分
+export async function updateModelRating(modelId: string, userId: string, score: number): Promise<Model | null> {
+  const db = getDB();
+  const collection = db.collection(COLLECTION_NAME);
+
+  const model = await getModelById(modelId);
+  if (!model) return null;
+
+  const currentRating = model.rating || {
+    positiveCount: 0,
+    negativeCount: 0,
+    averageScore: 0,
+    ratings: {} as Record<string, number>,
+  };
+
+  const ratings: Record<string, number> = (currentRating.ratings as Record<string, number>) || {};
+  const oldScore = ratings[userId];
+  
+  // 更新评分统计
+  if (oldScore !== undefined) {
+    // 用户已评分，更新评分
+    if (oldScore >= 3 && score < 3) {
+      currentRating.positiveCount = (currentRating.positiveCount || 0) - 1;
+      currentRating.negativeCount = (currentRating.negativeCount || 0) + 1;
+    } else if (oldScore < 3 && score >= 3) {
+      currentRating.positiveCount = (currentRating.positiveCount || 0) + 1;
+      currentRating.negativeCount = (currentRating.negativeCount || 0) - 1;
+    }
+  } else {
+    // 新评分
+    if (score >= 3) {
+      currentRating.positiveCount = (currentRating.positiveCount || 0) + 1;
+    } else {
+      currentRating.negativeCount = (currentRating.negativeCount || 0) + 1;
+    }
+  }
+
+  ratings[userId] = score;
+  currentRating.ratings = ratings;
+
+  // 计算平均分
+  const allScores = Object.values(ratings) as number[];
+  currentRating.averageScore = allScores.reduce((a: number, b: number) => a + b, 0) / allScores.length;
+
+  const result = await collection.findOneAndUpdate(
+    { id: modelId },
+    {
+      $set: {
+        rating: currentRating,
+        updatedAt: new Date(),
+      },
+    },
+    { returnDocument: 'after' }
+  );
+
+  if (!result || !result.value) return null;
+
+  return toEntity<Model>(result.value);
 }
 
 export async function searchModels(query: {
@@ -81,6 +195,9 @@ export async function searchModels(query: {
   provider?: string;
   feature?: string;
   priceRange?: [number, number];
+  ownerId?: string;
+  isPublic?: boolean;
+  tags?: string[];
 }): Promise<Model[]> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
@@ -105,6 +222,18 @@ export async function searchModels(query: {
       { 'pricing.input': { $gte: min, $lte: max } },
       { 'pricing.perRequest': { $gte: min, $lte: max } },
     ];
+  }
+
+  if (query.ownerId) {
+    filter.ownerId = query.ownerId;
+  }
+
+  if (query.isPublic !== undefined) {
+    filter.isPublic = query.isPublic;
+  }
+
+  if (query.tags && query.tags.length > 0) {
+    filter.tags = { $in: query.tags };
   }
 
   const docs = await collection.find(filter).toArray();

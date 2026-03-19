@@ -30,7 +30,7 @@ export function LoginPage() {
   // 检查用户是否已登录，如果已登录则重定向
   useEffect(() => {
     if (user) {
-      navigate(user.role === 'admin' ? '/console/dashboard' : '/dashboard', { replace: true });
+      navigate('/dashboard', { replace: true });
     }
   }, [user, navigate]);
 
@@ -48,12 +48,8 @@ export function LoginPage() {
       // 使用 AuthContext 的 login 方法
       login(response.data.token, response.data.user);
 
-      // 重定向到仪表板
-      if (response.data.user.role === 'admin') {
-        navigate('/console/dashboard');
-      } else {
-        navigate('/dashboard');
-      }
+      // 所有用户登录后都跳转到用户仪表板
+      navigate('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.error || t('auth.loginFailed'));
     } finally {

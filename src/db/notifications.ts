@@ -5,14 +5,14 @@ import { ObjectId } from 'mongodb';
 
 const COLLECTION_NAME = 'notifications';
 
-export async function createNotification(notification: Omit<Notification, 'id'> & { _id?: ObjectId }): Promise<Notification> {
+export async function createNotification(notification: Omit<Notification, 'id' | 'createdAt'> & { _id?: ObjectId }): Promise<Notification> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
 
   const doc = {
     ...notification,
     _id: notification._id || new ObjectId(),
-    createdAt: new Date(),
+    createdAt: Date.now(),
   };
 
   await collection.insertOne(doc);

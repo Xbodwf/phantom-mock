@@ -99,7 +99,7 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     // 检查邀请人是否有可用邀请次数
-    const availableQuota = getAvailableInviteQuota(inviter);
+    const availableQuota = getAvailableInviteQuota(inviter.id);
     if (availableQuota <= 0) {
       return res.status(400).json({ error: 'Invite code has no remaining quota' });
     }
@@ -140,6 +140,7 @@ router.post('/register', async (req: Request, res: Response) => {
       role: 'user',
       inviteCode: userInviteCode,
       invitedBy: inviter.id,
+      createdAt: Date.now(),
     });
 
     // 创建邀请记录
@@ -147,7 +148,6 @@ router.post('/register', async (req: Request, res: Response) => {
       inviterId: inviter.id,
       inviteeId: user.id,
       inviteCode: inviteCode,
-      createdAt: Date.now(),
     });
 
     // 如果邀请人是普通用户且有额外邀请次数，扣除一次

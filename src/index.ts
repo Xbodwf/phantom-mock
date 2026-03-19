@@ -4,9 +4,11 @@ import { addPendingRequest, getPendingRequest, removePendingRequest, getPendingC
 import { buildResponse, buildStreamChunk, buildStreamDone, generateRequestId } from './responseBuilder.js';
 import { broadcastRequest, initWebSocket, getConnectedClientsCount, broadcastModelsUpdate } from './websocket.js';
 import { createServer } from 'http';
-import { existsSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readdirSync, unlinkSync, statSync } from 'fs';
+import { join, extname } from 'path';
+import multer from 'multer';
 import {
+  initializeDatabase,
   loadModels,
   getAllModels,
   getModel,
@@ -75,12 +77,59 @@ app.use((req, res, next) => {
 });
 
 // ==================== 初始化数据 ====================
+// 创建 static/models 目录（用于存储模型图标）
+const staticModelsPath = join(process.cwd(), 'static', 'models');
+if (!existsSync(staticModelsPath)) {
+  mkdirSync(staticModelsPath, { recursive: true });
+}
+
+// 配置 multer 用于模型图标上传
+const modelIconStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, staticModelsPath);
+  },
+  filename: (_req, file, cb) => {
+    // 使用原始文件名，添加时间戳防止重名
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = extname(file.originalname);
+    const baseName = file.originalname.replace(ext, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    cb(null, `${baseName}-${uniqueSuffix}${ext}`);
+  }
+});
+const uploadModelIcon = multer({
+  storage: modelIconStorage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 限制 2MB
+  fileFilter: (_req, file, cb) => {
+    // 只允许图片文件
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/svg+xml', 'image/webp'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('只支持 PNG, JPG, GIF, SVG, WEBP 格式的图片'));
+    }
+  }
+});
+
+// ==================== 初始化数据 ====================
 (async () => {
-  await loadUsers();
-  await loadUsageRecords();
-  await loadInvoices();
-  await loadActions();
-  await loadWorkflows();
+  try {
+    // 初始化数据库连接
+    await initializeDatabase();
+    
+    // 加载所有数据到内存缓存
+    await loadModels();
+    await loadApiKeys();
+    await loadUsers();
+    await loadUsageRecords();
+    await loadInvoices();
+    await loadActions();
+    await loadWorkflows();
+    
+    console.log('[Server] All data loaded successfully');
+  } catch (error) {
+    console.error('[Server] Failed to initialize:', error);
+    process.exit(1);
+  }
 })();
 
 // ==================== 认证路由 ====================
@@ -211,7 +260,7 @@ app.get('/api/models', authMiddleware, (req: Request, res: Response) => {
 
 // POST /api/models - 添加模型
 app.post('/api/models', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
-  const { id, owned_by, description, context_length, aliases, max_output_tokens, pricing, api_key, api_base_url, api_type, supported_features, require_api_key } = req.body;
+  const { id, owned_by, description, context_length, aliases, max_output_tokens, pricing, api_key, api_base_url, api_type, supported_features, require_api_key, icon } = req.body;
 
   if (!id) {
     return res.status(400).json({ error: 'Model ID is required' });
@@ -235,6 +284,7 @@ app.post('/api/models', authMiddleware, adminMiddleware, async (req: Request, re
       api_type,
       supported_features,
       require_api_key: require_api_key ?? true, // 默认需要 API Key
+      icon,
     });
     broadcastModelsUpdate(getAllModels());
     res.json({ success: true, model: newModel });
@@ -243,10 +293,15 @@ app.post('/api/models', authMiddleware, adminMiddleware, async (req: Request, re
   }
 });
 
-// PUT /api/models/:id - 更新模型
-app.put('/api/models/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
-  const id = req.params.id as string;
-  const { newId, owned_by, description, context_length, aliases, max_output_tokens, pricing, api_key, api_base_url, api_type, supported_features, require_api_key } = req.body;
+// PUT /api/models/:id(*) - 更新模型（支持模型ID包含"/"）
+app.put('/api/models/:id(*)', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  const id = decodeURIComponent(req.params.id as string);
+  const { 
+    newId, owned_by, description, context_length, aliases, max_output_tokens, 
+    pricing, api_key, api_base_url, api_type, forwardModelName, supported_features, 
+    require_api_key, icon, allowManualReply,
+    rpm, tpm, maxConcurrentRequests, concurrentQueues, allowOveruse
+  } = req.body;
 
   try {
     // 如果要修改ID，先检查新ID是否已存在
@@ -267,8 +322,16 @@ app.put('/api/models/:id', authMiddleware, adminMiddleware, async (req: Request,
       api_key,
       api_base_url,
       api_type,
+      forwardModelName,
       supported_features,
       require_api_key,
+      icon,
+      allowManualReply,
+      rpm,
+      tpm,
+      maxConcurrentRequests,
+      concurrentQueues,
+      allowOveruse,
     });
 
     if (!updated) {
@@ -282,9 +345,9 @@ app.put('/api/models/:id', authMiddleware, adminMiddleware, async (req: Request,
   }
 });
 
-// DELETE /api/models/:id - 删除模型
-app.delete('/api/models/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
-  const id = req.params.id as string;
+// DELETE /api/models/:id(*) - 删除模型（支持模型ID包含"/"）
+app.delete('/api/models/:id(*)', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  const id = decodeURIComponent(req.params.id as string);
 
   try {
     const deleted = await storageDeleteModel(id);
@@ -295,6 +358,70 @@ app.delete('/api/models/:id', authMiddleware, adminMiddleware, async (req: Reque
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: 'Failed to delete model' });
+  }
+});
+
+// ==================== 模型图标 API ====================
+
+// GET /api/model-icons - 获取已上传的模型图标列表
+app.get('/api/model-icons', authMiddleware, adminMiddleware, (_req: Request, res: Response) => {
+  try {
+    const files = readdirSync(staticModelsPath);
+    const icons = files
+      .filter(file => {
+        const ext = extname(file).toLowerCase();
+        return ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'].includes(ext);
+      })
+      .map(file => {
+        const filePath = join(staticModelsPath, file);
+        const stats = statSync(filePath);
+        return {
+          filename: file,
+          url: `/static/models/${file}`,
+          size: stats.size,
+          createdAt: stats.mtime.getTime(),
+        };
+      })
+      .sort((a, b) => b.createdAt - a.createdAt);
+    res.json({ icons });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to list icons' });
+  }
+});
+
+// POST /api/model-icons/upload - 上传模型图标
+app.post('/api/model-icons/upload', authMiddleware, adminMiddleware, uploadModelIcon.single('icon'), (req: Request, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  res.json({
+    success: true,
+    icon: {
+      filename: req.file.filename,
+      url: `/static/models/${req.file.filename}`,
+      size: req.file.size,
+    },
+  });
+});
+
+// DELETE /api/model-icons/:filename - 删除模型图标
+app.delete('/api/model-icons/:filename', authMiddleware, adminMiddleware, (req: Request, res: Response) => {
+  const filename = req.params.filename as string;
+  // 安全检查：防止路径遍历攻击
+  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+
+  const filePath = join(staticModelsPath, filename);
+  if (!existsSync(filePath)) {
+    return res.status(404).json({ error: 'Icon not found' });
+  }
+
+  try {
+    unlinkSync(filePath);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete icon' });
   }
 });
 
@@ -324,7 +451,7 @@ app.put('/api/settings', authMiddleware, adminMiddleware, async (req: Request, r
     const { port, ...settings } = req.body;
 
     // 更新设置
-    const updatedSettings = await updateSettings(settings);
+    await updateSettings(settings);
 
     // 如果包含端口配置，也更新服务器配置
     if (port !== undefined) {
@@ -332,7 +459,8 @@ app.put('/api/settings', authMiddleware, adminMiddleware, async (req: Request, r
       await updateServerConfig({ port });
     }
 
-    res.json({ success: true, settings: { ...updatedSettings, port } });
+    const finalSettings = await getSettings();
+    res.json({ success: true, settings: { ...finalSettings, port } });
   } catch (e) {
     res.status(500).json({ error: 'Failed to update settings' });
   }
@@ -1338,6 +1466,12 @@ function buildGeminiResponse(content: string, model: string) {
       totalTokenCount: content.length
     }
   };
+}
+
+// 静态文件服务 - 模型图标
+const staticPath = join(process.cwd(), 'static');
+if (existsSync(staticPath)) {
+  app.use('/static', express.static(staticPath));
 }
 
 // 静态文件服务（前端构建产物）

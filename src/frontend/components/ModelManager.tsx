@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -33,6 +33,8 @@ import {
   Select,
   FormControl,
   InputLabel,
+  Avatar,
+  CircularProgress,
 } from '@mui/material';
 import {
   Plus,
@@ -43,6 +45,11 @@ import {
   Link,
   Tag,
   Globe,
+  Image,
+  Upload,
+  X,
+  Gauge,
+  Settings,
 } from 'lucide-react';
 import { useServer } from '../contexts/ServerContext';
 import type { Model, ModelUpdateParams } from '../types';
@@ -83,10 +90,20 @@ interface FormData {
   pricing_input: number;
   pricing_output: number;
   pricing_per_request: number;
+  pricing_cache_read: number;
   api_key: string;
   api_base_url: string;
   api_type: 'openai' | 'anthropic' | 'google' | 'azure' | 'custom';
+  forwardModelName: string;       // 转发时使用的模型名称
   supported_features: string;
+  icon: string;
+  allowManualReply: boolean;      // 是否允许人工回复
+  // 新增字段
+  rpm: number;
+  tpm: number;
+  maxConcurrentRequests: number;
+  concurrentQueues: number;
+  allowOveruse: number;
 }
 
 const defaultFormData: FormData = {
@@ -100,10 +117,19 @@ const defaultFormData: FormData = {
   pricing_input: 0,
   pricing_output: 0,
   pricing_per_request: 0,
+  pricing_cache_read: 0,
   api_key: '',
   api_base_url: '',
   api_type: 'openai',
+  forwardModelName: '',
   supported_features: '',
+  icon: '',
+  allowManualReply: false,
+  rpm: 0,
+  tpm: 0,
+  maxConcurrentRequests: 100,
+  concurrentQueues: 10,
+  allowOveruse: 0,
 };
 
 export default function ModelManager() {
@@ -114,11 +140,79 @@ export default function ModelManager() {
   const [formData, setFormData] = useState<FormData>(defaultFormData);
   const [activeTab, setActiveTab] = useState(0);
 
+  // 图标相关状态
+  const [availableIcons, setAvailableIcons] = useState<Array<{ filename: string; url: string }>>([]);
+  const [loadingIcons, setLoadingIcons] = useState(false);
+  const [uploadingIcon, setUploadingIcon] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
 
+  // 获取可用图标列表
+  const fetchAvailableIcons = async () => {
+    setLoadingIcons(true);
+    try {
+      const token = localStorage.getItem('token');
+      const headers: HeadersInit = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const res = await fetch('/api/model-icons', { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setAvailableIcons(data.icons || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch icons:', error);
+    } finally {
+      setLoadingIcons(false);
+    }
+  };
+
+  // 上传图标
+  const handleUploadIcon = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploadingIcon(true);
+    try {
+      const token = localStorage.getItem('token');
+      const formData = new FormData();
+      formData.append('icon', file);
+
+      const res = await fetch('/api/model-icons/upload', {
+        method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        body: formData,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        // 选择刚上传的图标
+        setFormData(prev => ({ ...prev, icon: data.icon.url }));
+        // 刷新图标列表
+        await fetchAvailableIcons();
+      } else {
+        const error = await res.json();
+        alert(error.error || '上传失败');
+      }
+    } catch (error) {
+      console.error('Failed to upload icon:', error);
+      alert('上传失败');
+    } finally {
+      setUploadingIcon(false);
+      // 清空文件输入
+      if (event.target) {
+        event.target.value = '';
+      }
+    }
+  };
+
+  // 打开对话框时加载图标列表
   const handleOpenDialog = (model?: Model) => {
+    fetchAvailableIcons();
     if (model) {
       setEditingModel(model);
       setFormData({
@@ -132,10 +226,19 @@ export default function ModelManager() {
         pricing_input: model.pricing?.input || 0,
         pricing_output: model.pricing?.output || 0,
         pricing_per_request: model.pricing?.perRequest || 0,
+        pricing_cache_read: model.pricing?.cacheRead || 0,
         api_key: model.api_key || '',
         api_base_url: model.api_base_url || '',
         api_type: model.api_type || 'openai',
+        forwardModelName: model.forwardModelName || '',
         supported_features: model.supported_features?.join(', ') || '',
+        icon: model.icon || '',
+        allowManualReply: model.allowManualReply || false,
+        rpm: model.rpm || 0,
+        tpm: model.tpm || 0,
+        maxConcurrentRequests: model.maxConcurrentRequests || 100,
+        concurrentQueues: model.concurrentQueues || 10,
+        allowOveruse: model.allowOveruse || 0,
       });
     } else {
       setEditingModel(null);
@@ -166,11 +269,21 @@ export default function ModelManager() {
         input: formData.pricing_input,
         output: formData.pricing_output,
         perRequest: formData.pricing_per_request,
+        cacheRead: formData.pricing_cache_read || undefined,
       } : undefined,
       api_key: formData.api_key || undefined,
       api_base_url: formData.api_base_url || undefined,
       api_type: formData.api_type || undefined,
+      forwardModelName: formData.forwardModelName || undefined,
       supported_features: formData.supported_features ? formData.supported_features.split(',').map(s => s.trim()).filter(Boolean) : undefined,
+      icon: formData.icon || undefined,
+      allowManualReply: formData.allowManualReply,
+      // 新增字段
+      rpm: formData.rpm || undefined,
+      tpm: formData.tpm || undefined,
+      maxConcurrentRequests: formData.maxConcurrentRequests || undefined,
+      concurrentQueues: formData.concurrentQueues || undefined,
+      allowOveruse: formData.allowOveruse || undefined,
     };
 
     if (editingModel) {
@@ -223,9 +336,20 @@ export default function ModelManager() {
               <Card sx={{ backgroundColor: 'background.paper' }}>
                 <CardContent sx={{ pb: 1 }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
-                    <Typography variant="subtitle2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                      {model.id}
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {model.icon && (
+                        <Avatar 
+                          src={model.icon} 
+                          sx={{ width: 24, height: 24, borderRadius: 0.5 }}
+                          variant="rounded"
+                        >
+                          <Image size={16} />
+                        </Avatar>
+                      )}
+                      <Typography variant="subtitle2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                        {model.id}
+                      </Typography>
+                    </Box>
                     <Chip
                       label={model.owned_by}
                       size="small"
@@ -340,6 +464,94 @@ export default function ModelManager() {
                   helperText={t('models.manager.aliasesHelper')}
                   size="small"
                 />
+                
+                {/* 图标选择 */}
+                <Box>
+                  <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Image size={16} /> {t('models.manager.icon', '模型图标')}
+                  </Typography>
+                  
+                  {/* 当前选中的图标 */}
+                  {formData.icon && (
+                    <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Avatar 
+                        src={formData.icon} 
+                        sx={{ width: 48, height: 48, borderRadius: 1 }}
+                        variant="rounded"
+                      >
+                        <Image size={24} />
+                      </Avatar>
+                      <Typography variant="body2" color="text.secondary">
+                        {formData.icon.split('/').pop()}
+                      </Typography>
+                      <IconButton 
+                        size="small" 
+                        onClick={() => setFormData({ ...formData, icon: '' })}
+                        title={t('common.remove', '移除')}
+                      >
+                        <X size={16} />
+                      </IconButton>
+                    </Box>
+                  )}
+                  
+                  {/* 上传按钮 */}
+                  <Box sx={{ mb: 2 }}>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/gif,image/svg+xml,image/webp"
+                      style={{ display: 'none' }}
+                      ref={fileInputRef}
+                      onChange={handleUploadIcon}
+                    />
+                    <Button
+                      variant="outlined"
+                      component="span"
+                      startIcon={uploadingIcon ? <CircularProgress size={16} /> : <Upload size={16} />}
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingIcon}
+                      size="small"
+                    >
+                      {uploadingIcon ? t('models.manager.uploading', '上传中...') : t('models.manager.uploadIcon', '上传新图标')}
+                    </Button>
+                  </Box>
+                  
+                  {/* 已有图标列表 */}
+                  {loadingIcons ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                      <CircularProgress size={24} />
+                    </Box>
+                  ) : availableIcons.length > 0 ? (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                        {t('models.manager.selectIcon', '选择已有图标')}:
+                      </Typography>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                        {availableIcons.map((icon) => (
+                          <Tooltip key={icon.filename} title={icon.filename}>
+                            <Avatar
+                              src={icon.url}
+                              sx={{
+                                width: 40,
+                                height: 40,
+                                borderRadius: 1,
+                                cursor: 'pointer',
+                                border: formData.icon === icon.url ? '2px solid' : '1px solid',
+                                borderColor: formData.icon === icon.url ? 'primary.main' : 'divider',
+                                '&:hover': { opacity: 0.8 },
+                              }}
+                              variant="rounded"
+                              onClick={() => setFormData({ ...formData, icon: icon.url })}
+                            />
+                          </Tooltip>
+                        ))}
+                      </Box>
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      {t('models.manager.noIcons', '暂无已上传的图标')}
+                    </Typography>
+                  )}
+                </Box>
               </Stack>
             )}
 
@@ -418,7 +630,6 @@ export default function ModelManager() {
                 <TextField
                   label={t('models.manager.apiKey')}
                   fullWidth
-                  type="password"
                   value={formData.api_key}
                   onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
                   placeholder="sk-..."
@@ -433,6 +644,28 @@ export default function ModelManager() {
                   size="small"
                   helperText={t('models.manager.apiBaseUrlHelper')}
                 />
+                <TextField
+                  label={t('models.manager.forwardModelName', '转发模型名称')}
+                  fullWidth
+                  value={formData.forwardModelName}
+                  onChange={(e) => setFormData({ ...formData, forwardModelName: e.target.value })}
+                  placeholder={t('models.manager.forwardModelNamePlaceholder', '留空则使用原模型名称')}
+                  size="small"
+                  helperText={t('models.manager.forwardModelNameHelper', '不同平台的模型名称可能不同，可在此指定转发时使用的模型名称')}
+                />
+                
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.allowManualReply}
+                      onChange={(e) => setFormData({ ...formData, allowManualReply: e.target.checked })}
+                    />
+                  }
+                  label={t('models.manager.allowManualReply', '允许人工回复')}
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                  {t('models.manager.allowManualReplyHelper', '开启后，该模型的请求会在请求列表中显示，供管理员手动回复')}
+                </Typography>
 
                 <Divider sx={{ my: 1 }} />
 
@@ -447,6 +680,70 @@ export default function ModelManager() {
                   placeholder={t('models.manager.featuresPlaceholder')}
                   helperText="用逗号分隔"
                   size="small"
+                />
+
+                <Divider sx={{ my: 1 }} />
+
+                <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Gauge size={16} /> {t('models.manager.rateLimits', '速率限制')}
+                </Typography>
+                <Stack direction="row" spacing={2}>
+                  <TextField
+                    label={t('models.manager.rpm', 'RPM (每分钟请求数)')}
+                    type="number"
+                    fullWidth
+                    value={formData.rpm}
+                    onChange={(e) => setFormData({ ...formData, rpm: parseInt(e.target.value) || 0 })}
+                    size="small"
+                    inputProps={{ min: 0 }}
+                    helperText="0 表示无限制"
+                  />
+                  <TextField
+                    label={t('models.manager.tpm', 'TPM (每分钟Token数)')}
+                    type="number"
+                    fullWidth
+                    value={formData.tpm}
+                    onChange={(e) => setFormData({ ...formData, tpm: parseInt(e.target.value) || 0 })}
+                    size="small"
+                    inputProps={{ min: 0 }}
+                    helperText="0 表示无限制"
+                  />
+                </Stack>
+
+                <Divider sx={{ my: 1 }} />
+
+                <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Settings size={16} /> {t('models.manager.concurrentSettings', '并发配置')}
+                </Typography>
+                <Stack direction="row" spacing={2}>
+                  <TextField
+                    label={t('models.manager.maxConcurrentRequests', '最大同时请求数')}
+                    type="number"
+                    fullWidth
+                    value={formData.maxConcurrentRequests}
+                    onChange={(e) => setFormData({ ...formData, maxConcurrentRequests: parseInt(e.target.value) || 100 })}
+                    size="small"
+                    inputProps={{ min: 1 }}
+                  />
+                  <TextField
+                    label={t('models.manager.concurrentQueues', '同时进行队列数')}
+                    type="number"
+                    fullWidth
+                    value={formData.concurrentQueues}
+                    onChange={(e) => setFormData({ ...formData, concurrentQueues: parseInt(e.target.value) || 10 })}
+                    size="small"
+                    inputProps={{ min: 1 }}
+                  />
+                </Stack>
+                <TextField
+                  label={t('models.manager.allowOveruse', '允许超开倍率')}
+                  type="number"
+                  fullWidth
+                  value={formData.allowOveruse}
+                  onChange={(e) => setFormData({ ...formData, allowOveruse: parseFloat(e.target.value) || 0 })}
+                  size="small"
+                  inputProps={{ min: 0, step: 0.1 }}
+                  helperText={t('models.manager.allowOveruseHelper', '0表示不允许超开，1以上表示最大请求数*倍率')}
                 />
               </Stack>
             )}
@@ -511,9 +808,20 @@ export default function ModelManager() {
                 >
                   <TableCell>
                     <Box>
-                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 500 }}>
-                        {model.id}
-                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        {model.icon && (
+                          <Avatar 
+                            src={model.icon} 
+                            sx={{ width: 24, height: 24, borderRadius: 0.5 }}
+                            variant="rounded"
+                          >
+                            <Image size={16} />
+                          </Avatar>
+                        )}
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 500 }}>
+                          {model.id}
+                        </Typography>
+                      </Box>
                       {model.aliases && model.aliases.length > 0 && (
                         <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}>
                           {model.aliases.slice(0, 2).map(alias => (
@@ -647,6 +955,93 @@ export default function ModelManager() {
                 placeholder={t('models.manager.aliasesPlaceholder')}
                 helperText={t('models.manager.aliasesHelper')}
               />
+              
+              {/* 图标选择 */}
+              <Box>
+                <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Image size={16} /> {t('models.manager.icon', '模型图标')}
+                </Typography>
+                
+                {/* 当前选中的图标 */}
+                {formData.icon && (
+                  <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Avatar 
+                      src={formData.icon} 
+                      sx={{ width: 48, height: 48, borderRadius: 1 }}
+                      variant="rounded"
+                    >
+                      <Image size={24} />
+                    </Avatar>
+                    <Typography variant="body2" color="text.secondary">
+                      {formData.icon.split('/').pop()}
+                    </Typography>
+                    <IconButton 
+                      size="small" 
+                      onClick={() => setFormData({ ...formData, icon: '' })}
+                      title={t('common.remove', '移除')}
+                    >
+                      <X size={16} />
+                    </IconButton>
+                  </Box>
+                )}
+                
+                {/* 上传按钮 */}
+                <Box sx={{ mb: 2 }}>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/jpg,image/gif,image/svg+xml,image/webp"
+                    style={{ display: 'none' }}
+                    id="icon-upload-desktop"
+                    onChange={handleUploadIcon}
+                  />
+                  <Button
+                    variant="outlined"
+                    component="label"
+                    htmlFor="icon-upload-desktop"
+                    startIcon={uploadingIcon ? <CircularProgress size={16} /> : <Upload size={16} />}
+                    disabled={uploadingIcon}
+                  >
+                    {uploadingIcon ? t('models.manager.uploading', '上传中...') : t('models.manager.uploadIcon', '上传新图标')}
+                  </Button>
+                </Box>
+                
+                {/* 已有图标列表 */}
+                {loadingIcons ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                    <CircularProgress size={24} />
+                  </Box>
+                ) : availableIcons.length > 0 ? (
+                  <Box>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      {t('models.manager.selectIcon', '选择已有图标')}:
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                      {availableIcons.map((icon) => (
+                        <Tooltip key={icon.filename} title={icon.filename}>
+                          <Avatar
+                            src={icon.url}
+                            sx={{
+                              width: 40,
+                              height: 40,
+                              borderRadius: 1,
+                              cursor: 'pointer',
+                              border: formData.icon === icon.url ? '2px solid' : '1px solid',
+                              borderColor: formData.icon === icon.url ? 'primary.main' : 'divider',
+                              '&:hover': { opacity: 0.8 },
+                            }}
+                            variant="rounded"
+                            onClick={() => setFormData({ ...formData, icon: icon.url })}
+                          />
+                        </Tooltip>
+                      ))}
+                    </Box>
+                  </Box>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    {t('models.manager.noIcons', '暂无已上传的图标')}
+                  </Typography>
+                )}
+              </Box>
             </Stack>
           )}
 
@@ -708,7 +1103,6 @@ export default function ModelManager() {
               <TextField
                 label={t('models.manager.apiKey')}
                 fullWidth
-                type="password"
                 value={formData.api_key}
                 onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
                 placeholder="sk-..."
@@ -720,6 +1114,27 @@ export default function ModelManager() {
                 onChange={(e) => setFormData({ ...formData, api_base_url: e.target.value })}
                 placeholder="https://api.openai.com/v1"
               />
+              <TextField
+                label={t('models.manager.forwardModelName', '转发模型名称')}
+                fullWidth
+                value={formData.forwardModelName}
+                onChange={(e) => setFormData({ ...formData, forwardModelName: e.target.value })}
+                placeholder={t('models.manager.forwardModelNamePlaceholder', '留空则使用原模型名称')}
+                helperText={t('models.manager.forwardModelNameHelper', '不同平台的模型名称可能不同，可在此指定转发时使用的模型名称')}
+              />
+              
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formData.allowManualReply}
+                    onChange={(e) => setFormData({ ...formData, allowManualReply: e.target.checked })}
+                  />
+                }
+                label={t('models.manager.allowManualReply', '允许人工回复')}
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                {t('models.manager.allowManualReplyHelper', '开启后，该模型的请求会在请求列表中显示，供管理员手动回复')}
+              </Typography>
 
               <Divider sx={{ my: 1 }} />
 
@@ -733,6 +1148,65 @@ export default function ModelManager() {
                 onChange={(e) => setFormData({ ...formData, supported_features: e.target.value })}
                 placeholder={t('models.manager.featuresPlaceholder')}
                 helperText="用逗号分隔"
+              />
+
+              <Divider sx={{ my: 1 }} />
+
+              <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Gauge size={16} /> {t('models.manager.rateLimits', '速率限制')}
+              </Typography>
+              <Stack direction="row" spacing={2}>
+                <TextField
+                  label={t('models.manager.rpm', 'RPM (每分钟请求数)')}
+                  type="number"
+                  fullWidth
+                  value={formData.rpm}
+                  onChange={(e) => setFormData({ ...formData, rpm: parseInt(e.target.value) || 0 })}
+                  inputProps={{ min: 0 }}
+                  helperText="0 表示无限制"
+                />
+                <TextField
+                  label={t('models.manager.tpm', 'TPM (每分钟Token数)')}
+                  type="number"
+                  fullWidth
+                  value={formData.tpm}
+                  onChange={(e) => setFormData({ ...formData, tpm: parseInt(e.target.value) || 0 })}
+                  inputProps={{ min: 0 }}
+                  helperText="0 表示无限制"
+                />
+              </Stack>
+
+              <Divider sx={{ my: 1 }} />
+
+              <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Settings size={16} /> {t('models.manager.concurrentSettings', '并发配置')}
+              </Typography>
+              <Stack direction="row" spacing={2}>
+                <TextField
+                  label={t('models.manager.maxConcurrentRequests', '最大同时请求数')}
+                  type="number"
+                  fullWidth
+                  value={formData.maxConcurrentRequests}
+                  onChange={(e) => setFormData({ ...formData, maxConcurrentRequests: parseInt(e.target.value) || 100 })}
+                  inputProps={{ min: 1 }}
+                />
+                <TextField
+                  label={t('models.manager.concurrentQueues', '同时进行队列数')}
+                  type="number"
+                  fullWidth
+                  value={formData.concurrentQueues}
+                  onChange={(e) => setFormData({ ...formData, concurrentQueues: parseInt(e.target.value) || 10 })}
+                  inputProps={{ min: 1 }}
+                />
+              </Stack>
+              <TextField
+                label={t('models.manager.allowOveruse', '允许超开倍率')}
+                type="number"
+                fullWidth
+                value={formData.allowOveruse}
+                onChange={(e) => setFormData({ ...formData, allowOveruse: parseFloat(e.target.value) || 0 })}
+                inputProps={{ min: 0, step: 0.1 }}
+                helperText={t('models.manager.allowOveruseHelper', '0表示不允许超开，1以上表示最大请求数*倍率')}
               />
             </Stack>
           )}

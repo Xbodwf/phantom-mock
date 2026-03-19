@@ -6,7 +6,7 @@ import { ObjectId } from 'mongodb';
 const COLLECTION_NAME = 'invitationRecords';
 
 export async function createInvitationRecord(
-  record: Omit<InvitationRecord, 'id'> & { _id?: ObjectId }
+  record: Omit<InvitationRecord, 'id' | 'createdAt'> & { _id?: ObjectId }
 ): Promise<InvitationRecord> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
@@ -14,7 +14,7 @@ export async function createInvitationRecord(
   const doc = {
     ...record,
     _id: record._id || new ObjectId(),
-    createdAt: new Date(),
+    createdAt: Date.now(),
   };
 
   await collection.insertOne(doc);

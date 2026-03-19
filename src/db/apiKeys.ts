@@ -5,34 +5,34 @@ import { ObjectId } from 'mongodb';
 
 const COLLECTION_NAME = 'apiKeys';
 
-export async function createApiKey(apiKey: Omit<ApiKey, 'id'> & { _id?: ObjectId }): Promise<ApiKey> {
+export async function createApiKey(apiKey: Omit<ApiKey, 'id'> & { id?: string; _id?: ObjectId }): Promise<ApiKey> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
 
   const doc = {
     ...apiKey,
     _id: apiKey._id || new ObjectId(),
-    createdAt: new Date(),
+    createdAt: apiKey.createdAt || new Date(),
   };
 
   await collection.insertOne(doc);
-  return {
-    ...doc,
-    id: doc._id.toString(),
-  } as unknown as ApiKey;
+  return toEntity<ApiKey>(doc);
 }
 
 export async function getApiKey(id: string): Promise<ApiKey | null> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
 
-  const doc = await collection.findOne({ _id: new ObjectId(id) });
-  if (!doc) return null;
+  // 尝试通过业务 id 查找
+  let doc = await collection.findOne({ id });
+  
+  // 如果没找到，尝试通过 ObjectId 查找
+  if (!doc && ObjectId.isValid(id) && id.length === 24) {
+    doc = await collection.findOne({ _id: new ObjectId(id) });
+  }
 
-  return {
-    ...doc,
-    id: doc._id.toString(),
-  } as unknown as ApiKey;
+  if (!doc) return null;
+  return toEntity<ApiKey>(doc);
 }
 
 export async function getApiKeyByKey(key: string): Promise<ApiKey | null> {
@@ -42,10 +42,7 @@ export async function getApiKeyByKey(key: string): Promise<ApiKey | null> {
   const doc = await collection.findOne({ key });
   if (!doc) return null;
 
-  return {
-    ...doc,
-    id: doc._id.toString(),
-  } as unknown as ApiKey;
+  return toEntity<ApiKey>(doc);
 }
 
 export async function getApiKeysByUserId(userId: string): Promise<ApiKey[]> {
@@ -53,10 +50,7 @@ export async function getApiKeysByUserId(userId: string): Promise<ApiKey[]> {
   const collection = db.collection(COLLECTION_NAME);
 
   const docs = await collection.find({ userId }).toArray();
-  return docs.map(doc => ({
-    ...doc,
-    id: doc._id.toString(),
-  })) as unknown as ApiKey[];
+  return toEntities<ApiKey>(docs);
 }
 
 export async function getAllApiKeys(): Promise<ApiKey[]> {
@@ -64,38 +58,47 @@ export async function getAllApiKeys(): Promise<ApiKey[]> {
   const collection = db.collection(COLLECTION_NAME);
 
   const docs = await collection.find({}).toArray();
-  return docs.map(doc => ({
-    ...doc,
-    id: doc._id.toString(),
-  })) as unknown as ApiKey[];
+  return toEntities<ApiKey>(docs);
 }
 
 export async function updateApiKey(id: string, updates: Partial<ApiKey>): Promise<ApiKey | null> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
 
-  const result = await collection.findOneAndUpdate(
-    { _id: new ObjectId(id) },
-    {
-      $set: updates,
-    },
+  // 通过业务 id 更新
+  let result = await collection.findOneAndUpdate(
+    { id },
+    { $set: updates },
     { returnDocument: 'after' }
   );
 
-  if (!result || !result.value) return null;
+  // 如果没找到，尝试通过 ObjectId 更新
+  if (!result || !result.value) {
+    if (ObjectId.isValid(id) && id.length === 24) {
+      result = await collection.findOneAndUpdate(
+        { _id: new ObjectId(id) },
+        { $set: updates },
+        { returnDocument: 'after' }
+      );
+    }
+  }
 
-  const doc = result.value as any;
-  return {
-    ...doc,
-    id: doc._id.toString(),
-  } as unknown as ApiKey;
+  if (!result || !result.value) return null;
+  return toEntity<ApiKey>(result.value);
 }
 
 export async function deleteApiKey(id: string): Promise<boolean> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
 
-  const result = await collection.deleteOne({ _id: new ObjectId(id) });
+  // 通过业务 id 删除
+  let result = await collection.deleteOne({ id });
+
+  // 如果没删除，尝试通过 ObjectId 删除
+  if (result.deletedCount === 0 && ObjectId.isValid(id) && id.length === 24) {
+    result = await collection.deleteOne({ _id: new ObjectId(id) });
+  }
+
   return result.deletedCount > 0;
 }
 
@@ -103,19 +106,24 @@ export async function updateApiKeyLastUsed(id: string): Promise<ApiKey | null> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
 
-  const result = await collection.findOneAndUpdate(
-    { _id: new ObjectId(id) },
-    {
-      $set: { lastUsedAt: new Date() },
-    },
+  // 通过业务 id 更新
+  let result = await collection.findOneAndUpdate(
+    { id },
+    { $set: { lastUsedAt: new Date() } },
     { returnDocument: 'after' }
   );
 
-  if (!result || !result.value) return null;
+  // 如果没找到，尝试通过 ObjectId 更新
+  if (!result || !result.value) {
+    if (ObjectId.isValid(id) && id.length === 24) {
+      result = await collection.findOneAndUpdate(
+        { _id: new ObjectId(id) },
+        { $set: { lastUsedAt: new Date() } },
+        { returnDocument: 'after' }
+      );
+    }
+  }
 
-  const doc = result.value as any;
-  return {
-    ...doc,
-    id: doc._id.toString(),
-  } as unknown as ApiKey;
+  if (!result || !result.value) return null;
+  return toEntity<ApiKey>(result.value);
 }

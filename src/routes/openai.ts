@@ -77,10 +77,11 @@ router.get('/models', (req: Request, res: Response) => {
 });
 
 /**
- * GET /v1/models/:id - 获取单个模型
+ * GET /v1/models/:id(*) - 获取单个模型（支持模型ID包含"/"）
  */
-router.get('/models/:id', (req: Request, res: Response) => {
-  const model = getModel(req.params.id as string);
+router.get('/models/:id(*)', (req: Request, res: Response) => {
+  const modelId = decodeURIComponent(req.params.id as string);
+  const model = getModel(modelId);
   if (!model) {
     return res.status(404).json({
       error: { message: 'Model not found', type: 'invalid_request_error' }

@@ -9,6 +9,29 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/app/data
+      - ./static:/app/static
     environment:
       - NODE_ENV=production
       - PORT=7143
+      # MongoDB 连接配置（可选，如果使用 MongoDB）
+      # - MONGODB_URI=mongodb://mongodb:27017/phantom-mock
+    ports:
+      - "7143:7143"
+    # 如果使用 MongoDB，取消下面的注释
+    # depends_on:
+    #   - mongodb
+
+  # MongoDB 服务（可选）
+  # mongodb:
+  #   image: mongo:7
+  #   container_name: phantom-mock-mongodb
+  #   restart: unless-stopped
+  #   volumes:
+  #     - mongodb_data:/data/db
+  #   ports:
+  #     - "27017:27017"
+  #   environment:
+  #     - MONGO_INITDB_DATABASE=phantom-mock
+
+# volumes:
+#   mongodb_data:

@@ -1,19 +1,27 @@
-import { readFile, writeFile, access, mkdir } from 'fs/promises';
 import { join } from 'path';
 import type { Model, ApiKey, User, UsageRecord, Invoice, Action, Workflow, InvitationRecord, Notification } from './types.js';
 import { randomBytes } from 'crypto';
+import { connectDB, getDB, initializeIndexes } from './db/index.js';
+import * as modelsDB from './db/models.js';
+import * as usersDB from './db/users.js';
+import * as apiKeysDB from './db/apiKeys.js';
+import * as usageRecordsDB from './db/usageRecords.js';
+import * as invoicesDB from './db/invoices.js';
+import * as actionsDB from './db/actions.js';
+import * as notificationsDB from './db/notifications.js';
+import * as invitationsDB from './db/invitations.js';
 
 const DATA_DIR = join(process.cwd(), 'data');
 const CONFIG_FILE = join(DATA_DIR, 'config.json');
-const MODELS_FILE = join(DATA_DIR, 'models.json');
-const API_KEYS_FILE = join(DATA_DIR, 'api_keys.json');
-const USERS_FILE = join(DATA_DIR, 'users.json');
-const USAGE_RECORDS_FILE = join(DATA_DIR, 'usage_records.json');
-const INVOICES_FILE = join(DATA_DIR, 'invoices.json');
-const ACTIONS_FILE = join(DATA_DIR, 'actions.json');
-const WORKFLOWS_FILE = join(DATA_DIR, 'workflows.json');
-const INVITATIONS_FILE = join(DATA_DIR, 'invitations.json');
-const NOTIFICATIONS_FILE = join(DATA_DIR, 'notifications.json');
+
+// 内存缓存（仅用于配置和临时数据）
+let modelsCache: Model[] = [];
+let apiKeysCache: ApiKey[] = [];
+let usersCache: User[] = [];
+let usageRecordsCache: UsageRecord[] = [];
+let invoicesCache: Invoice[] = [];
+let actionsCache: Action[] = [];
+let notificationsCache: Notification[] = [];
 
 export interface ServerConfig {
   port: number;
@@ -21,42 +29,22 @@ export interface ServerConfig {
 }
 
 export interface SystemSettings {
-  streamDelay: number; // 流式响应延迟时间（毫秒）
-  requireApiKey?: boolean; // 全局是否需要API Key（默认false）
-  smoothOutput?: boolean; // 平滑输出模式（默认false）
-  smoothSpeed?: number; // 平滑输出速度，字符/秒（默认20）
-  emailVerificationEnabled?: boolean; // 是否启用邮箱验证（默认false）
+  streamDelay: number;
+  requireApiKey?: boolean;
+  smoothOutput?: boolean;
+  smoothSpeed?: number;
+  emailVerificationEnabled?: boolean;
   emailjs?: {
-    serviceId: string; // EmailJS Service ID
-    templateId: string; // EmailJS Template ID
-    publicKey: string; // EmailJS Public Key
-    privateKey: string; // EmailJS Private Key
+    serviceId: string;
+    templateId: string;
+    publicKey: string;
+    privateKey: string;
   };
 }
 
 export interface Config {
   server: ServerConfig;
   settings: SystemSettings;
-  models: Array<{
-    id: string;
-    owned_by: string;
-    description?: string;
-    context_length?: number;
-    aliases?: string[];
-    max_output_tokens?: number;
-    pricing?: {
-      input?: number;
-      output?: number;
-      unit?: 'K' | 'M';
-      type?: 'token' | 'request';
-      perRequest?: number;
-    };
-    api_key?: string;
-    api_base_url?: string;
-    api_type?: 'openai' | 'anthropic' | 'google' | 'azure' | 'custom';
-    supported_features?: string[];
-    require_api_key?: boolean;
-  }>;
 }
 
 // 默认配置
@@ -66,55 +54,44 @@ const defaultConfig: Config = {
     host: '0.0.0.0',
   },
   settings: {
-    streamDelay: 500, // 默认 500ms 延迟
-    requireApiKey: false, // 默认不需要API Key
-    smoothOutput: false, // 默认不启用平滑输出
-    smoothSpeed: 20, // 默认每秒20个字符
+    streamDelay: 500,
+    requireApiKey: false,
+    smoothOutput: false,
+    smoothSpeed: 20,
   },
-  models: [
-    { id: 'gemini-2.5-flash', owned_by: 'google', description: 'Fast and efficient Gemini 2.5', context_length: 1000000 },
-    { id: 'gemini-2.5-pro', owned_by: 'google', description: 'Most advanced Gemini 2.5 reasoning', context_length: 1000000 },
-    { id: 'gemini-3-flash-preview', owned_by: 'google', description: 'Gemini 3 Flash Preview', context_length: 1048576 },
-    { id: 'gemini-3-pro-preview', owned_by: 'google', description: 'Gemini 3 Pro Preview', context_length: 1048576 },
-    { id: 'gemini-3.1-flash-preview', owned_by: 'google', description: 'Gemini 3.1 Flash Preview', context_length: 1048576 },
-    { id: 'gemini-3.1-pro-preview', owned_by: 'google', description: 'Gemini 3.1 Pro Preview', context_length: 1048576 },
-    { id: 'claude-opus-4.6', owned_by: 'anthropic', description: 'Anthropic strongest model with 1M context', context_length: 1000000 },
-  ],
 };
 
 let config: Config | null = null;
-let models: Model[] = [];
-let apiKeys: ApiKey[] = [];
-let users: User[] = [];
-let usageRecords: UsageRecord[] = [];
-let invoices: Invoice[] = [];
-let actions: Action[] = [];
 
-// 确保目录存在
-async function ensureDir() {
+// ==================== 数据库初始化 ====================
+
+export async function initializeDatabase(): Promise<void> {
+  await connectDB();
+  await initializeIndexes();
+  console.log('[Storage] Database initialized');
+}
+
+// ==================== 配置管理（仍使用 JSON 文件）====================
+
+async function ensureDataDir(): Promise<void> {
   try {
-    await access(DATA_DIR);
-  } catch {
-    await mkdir(DATA_DIR, { recursive: true });
+    const { access, mkdir } = await import('fs/promises');
+    try {
+      await access(DATA_DIR);
+    } catch {
+      await mkdir(DATA_DIR, { recursive: true });
+    }
+  } catch (e) {
+    console.warn('[Storage] Failed to ensure data directory:', e);
   }
 }
 
-// 确保文件存在
-async function ensureFile(filePath: string, defaultContent: object) {
-  try {
-    await access(filePath);
-  } catch {
-    await writeFile(filePath, JSON.stringify(defaultContent, null, 2));
-  }
-}
-
-// 加载配置
 export async function loadConfig(): Promise<Config> {
   if (config) return config;
 
   try {
-    await ensureDir();
-    await ensureFile(CONFIG_FILE, defaultConfig);
+    await ensureDataDir();
+    const { readFile } = await import('fs/promises');
     const content = await readFile(CONFIG_FILE, 'utf-8');
     config = JSON.parse(content);
     return config!;
@@ -125,696 +102,433 @@ export async function loadConfig(): Promise<Config> {
   }
 }
 
-// 保存配置
 export async function saveConfig(newConfig: Config): Promise<void> {
+  await ensureDataDir();
+  const { writeFile } = await import('fs/promises');
   await writeFile(CONFIG_FILE, JSON.stringify(newConfig, null, 2));
   config = newConfig;
 }
 
-// 加载模型列表
-export async function loadModels(): Promise<Model[]> {
-  if (models.length > 0) return models;
-
-  try {
-    const cfg = await loadConfig();
-    models = cfg.models.map((m, i) => ({
-      id: m.id,
-      object: 'model' as const,
-      created: 1700000000 + i * 10000,
-      owned_by: m.owned_by,
-      description: m.description,
-      context_length: m.context_length,
-      aliases: m.aliases,
-      max_output_tokens: m.max_output_tokens,
-      pricing: m.pricing,
-      api_key: m.api_key,
-      api_base_url: m.api_base_url,
-      api_type: m.api_type,
-      supported_features: m.supported_features,
-      require_api_key: m.require_api_key,
-    }));
-    return models;
-  } catch (e) {
-    console.warn('[Storage] 加载模型列表失败:', e);
-    return [];
-  }
-}
-
-// 获取单个模型
-export function getModel(id: string): Model | undefined {
-  return models.find(m => m.id === id);
-}
-
-// 获取所有模型
-export function getAllModels(): Model[] {
-  return models;
-}
-
-// 添加模型
-export async function addModel(model: Omit<Model, 'object' | 'created'>): Promise<Model> {
-  const newModel: Model = {
-    ...model,
-    object: 'model',
-    created: Math.floor(Date.now() / 1000),
-  };
-  models.push(newModel);
-  await saveModels();
-  return newModel;
-}
-
-// 更新模型
-export async function updateModel(id: string, updates: Partial<Model>): Promise<Model | null> {
-  const index = models.findIndex(m => m.id === id);
-  if (index === -1) return null;
-
-  models[index] = { ...models[index], ...updates };
-  await saveModels();
-  return models[index];
-}
-
-// 删除模型
-export async function deleteModel(id: string): Promise<boolean> {
-  const index = models.findIndex(m => m.id === id);
-  if (index === -1) return false;
-
-  models.splice(index, 1);
-  await saveModels();
-  return true;
-}
-
-// 保存模型到配置文件
-async function saveModels(): Promise<void> {
-  if (!config) {
-    config = await loadConfig();
-  }
-  config.models = models.map(m => ({
-    id: m.id,
-    owned_by: m.owned_by,
-    description: m.description,
-    context_length: m.context_length,
-    aliases: m.aliases,
-    max_output_tokens: m.max_output_tokens,
-    pricing: m.pricing,
-    api_key: m.api_key,
-    api_base_url: m.api_base_url,
-    api_type: m.api_type,
-    supported_features: m.supported_features,
-    require_api_key: m.require_api_key,
-  }));
-  await saveConfig(config);
-}
-
-// ==================== API Key 管理 ====================
-
-// 生成随机 API Key
-function generateApiKeyString(): string {
-  const prefix = 'sk-fake';
-  const random = randomBytes(24).toString('base64url');
-  return `${prefix}-${random}`;
-}
-
-// 加载 API Keys
-export async function loadApiKeys(): Promise<ApiKey[]> {
-  if (apiKeys.length > 0) return apiKeys;
-
-  try {
-    await ensureDir();
-    await ensureFile(API_KEYS_FILE, []);
-    const content = await readFile(API_KEYS_FILE, 'utf-8');
-    const parsed = JSON.parse(content);
-    apiKeys = Array.isArray(parsed) ? parsed : [];
-    return apiKeys;
-  } catch (e) {
-    console.warn('[Storage] 加载 API Keys 失败:', e);
-    apiKeys = [];
-    return apiKeys;
-  }
-}
-
-// 保存 API Keys
-async function saveApiKeys(): Promise<void> {
-  await writeFile(API_KEYS_FILE, JSON.stringify(apiKeys, null, 2));
-}
-
-// 获取所有 API Keys（返回完整对象）
-export function getAllApiKeys(): ApiKey[] {
-  return apiKeys;
-}
-
-// 创建 API Key
-export async function createApiKey(name: string, permissions?: ApiKey['permissions']): Promise<ApiKey> {
-  const newKey: ApiKey = {
-    id: `key_${Date.now()}`,
-    key: generateApiKeyString(),
-    name,
-    createdAt: Date.now(),
-    enabled: true,
-    viewCount: 0, // 初始化查看计数为0
-    permissions,
-  };
-  apiKeys.push(newKey);
-  await saveApiKeys();
-  return newKey;
-}
-
-// 验证 API Key
-export async function validateApiKey(key: string): Promise<ApiKey | null> {
-  const found = apiKeys.find(k => k.key === key && k.enabled);
-  if (found) {
-    found.lastUsedAt = Date.now();
-    await saveApiKeys();
-    return found;
-  }
-  return null;
-}
-
-// 更新 API Key
-export async function updateApiKey(id: string, updates: Partial<ApiKey>): Promise<ApiKey | null> {
-  const index = apiKeys.findIndex(k => k.id === id);
-  if (index === -1) return null;
-
-  // 不允许更新 key 本身
-  delete updates.key;
-  apiKeys[index] = { ...apiKeys[index], ...updates };
-  await saveApiKeys();
-  return apiKeys[index];
-}
-
-// 删除 API Key
-export async function deleteApiKey(id: string): Promise<boolean> {
-  const index = apiKeys.findIndex(k => k.id === id);
-  if (index === -1) return false;
-
-  apiKeys.splice(index, 1);
-  await saveApiKeys();
-  return true;
-}
-
-// 获取完整 API Key（仅用于显示一次）
-export function getFullApiKey(id: string): string | null {
-  const found = apiKeys.find(k => k.id === id);
-  return found ? found.key : null;
-}
-
-// 获取服务器配置
 export async function getServerConfig(): Promise<ServerConfig> {
   const cfg = await loadConfig();
   return cfg.server;
 }
 
-// 获取系统设置
+export async function updateServerConfig(updates: Partial<ServerConfig>): Promise<void> {
+  const cfg = await loadConfig();
+  cfg.server = { ...cfg.server, ...updates };
+  await saveConfig(cfg);
+}
+
 export async function getSettings(): Promise<SystemSettings> {
   const cfg = await loadConfig();
-  return cfg.settings || { streamDelay: 500, requireApiKey: false, smoothOutput: false, smoothSpeed: 20 };
+  return cfg.settings;
 }
 
-// 更新系统设置
-export async function updateSettings(settings: Partial<SystemSettings>): Promise<SystemSettings> {
-  if (!config) {
-    config = await loadConfig();
-  }
-  config.settings = { ...config.settings, ...settings };
-  await saveConfig(config);
-  return config.settings;
+export async function updateSettings(settings: Partial<SystemSettings>): Promise<void> {
+  const cfg = await loadConfig();
+  cfg.settings = { ...cfg.settings, ...settings };
+  await saveConfig(cfg);
 }
 
-// 更新服务器配置
-export async function updateServerConfig(serverConfig: Partial<ServerConfig>): Promise<ServerConfig> {
-  if (!config) {
-    config = await loadConfig();
+// ==================== 模型管理 ====================
+
+export async function loadModels(): Promise<Model[]> {
+  try {
+    modelsCache = await modelsDB.getAllModels();
+    return modelsCache;
+  } catch (e) {
+    console.error('[Storage] Failed to load models:', e);
+    return [];
   }
-  config.server = { ...config.server, ...serverConfig };
-  await saveConfig(config);
-  return config.server;
+}
+
+export function getModel(id: string): Model | undefined {
+  return modelsCache.find(m => m.id === id);
+}
+
+export function getAllModels(): Model[] {
+  return modelsCache;
+}
+
+export async function addModel(model: Omit<Model, 'object' | 'created'>): Promise<Model> {
+  const newModel = await modelsDB.createModel({
+    ...model,
+    object: 'model',
+    created: Math.floor(Date.now() / 1000),
+  });
+  modelsCache.push(newModel);
+  return newModel;
+}
+
+export async function updateModel(id: string, updates: Partial<Model>): Promise<Model | null> {
+  const updated = await modelsDB.updateModelById(id, updates);
+  if (updated) {
+    const index = modelsCache.findIndex(m => m.id === id);
+    if (index !== -1) {
+      modelsCache[index] = updated;
+    }
+  }
+  return updated;
+}
+
+export async function deleteModel(id: string): Promise<boolean> {
+  const deleted = await modelsDB.deleteModelById(id);
+  if (deleted) {
+    modelsCache = modelsCache.filter(m => m.id !== id);
+  }
+  return deleted;
+}
+
+// ==================== API Key 管理 ====================
+
+export async function loadApiKeys(): Promise<ApiKey[]> {
+  try {
+    apiKeysCache = await apiKeysDB.getAllApiKeys();
+    return apiKeysCache;
+  } catch (e) {
+    console.error('[Storage] Failed to load API keys:', e);
+    return [];
+  }
+}
+
+export function getAllApiKeys(): ApiKey[] {
+  return apiKeysCache;
+}
+
+export async function createApiKey(name: string, userId?: string, permissions?: ApiKey['permissions']): Promise<ApiKey> {
+  // 生成更复杂的 API key: sk- + 48位 base62 字符
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const randomValues = randomBytes(48);
+  const keySuffix = Array.from(randomValues).map(b => chars[b % chars.length]).join('');
+  const key = `sk-${keySuffix}`;
+  
+  const apiKey = await apiKeysDB.createApiKey({
+    key,
+    name,
+    userId,
+    createdAt: Date.now(),
+    enabled: true,
+    permissions,
+  });
+  apiKeysCache.push(apiKey);
+  return apiKey;
+}
+
+export async function updateApiKey(id: string, updates: Partial<ApiKey>): Promise<ApiKey | null> {
+  const updated = await apiKeysDB.updateApiKey(id, updates);
+  if (updated) {
+    const index = apiKeysCache.findIndex(k => k.id === id);
+    if (index !== -1) {
+      apiKeysCache[index] = updated;
+    }
+  }
+  return updated;
+}
+
+export async function deleteApiKey(id: string): Promise<boolean> {
+  const deleted = await apiKeysDB.deleteApiKey(id);
+  if (deleted) {
+    apiKeysCache = apiKeysCache.filter(k => k.id !== id);
+  }
+  return deleted;
+}
+
+export async function validateApiKey(key: string): Promise<ApiKey | null> {
+  const apiKey = await apiKeysDB.getApiKeyByKey(key);
+  if (!apiKey || !apiKey.enabled) return null;
+  
+  // 检查过期时间
+  if (apiKey.expiresAt && apiKey.expiresAt < Date.now()) {
+    return null;
+  }
+  
+  // 更新最后使用时间
+  await apiKeysDB.updateApiKey(apiKey.id, { lastUsedAt: Date.now() });
+  
+  return apiKey;
 }
 
 // ==================== 用户管理 ====================
 
 export async function loadUsers(): Promise<User[]> {
-  if (users.length > 0) return users;
-
   try {
-    await ensureDir();
-    await ensureFile(USERS_FILE, []);
-    const content = await readFile(USERS_FILE, 'utf-8');
-    users = JSON.parse(content);
-
-    // 如果没有用户，创建默认管理员
-    if (users.length === 0) {
-      const { hashPassword } = await import('./auth.js');
-      const adminUser: User = {
-        id: 'admin_default',
-        username: 'admin',
-        email: 'admin@localhost',
-        passwordHash: await hashPassword('admin123'),
-        balance: 10000,
-        totalUsage: 0,
-        createdAt: Date.now(),
-        enabled: true,
-        role: 'admin',
-        inviteCode: generateInviteCode(),
-      };
-      users.push(adminUser);
-      await saveUsers();
-      console.log('[Storage] 创建默认管理员用户: admin / admin123');
-    } else {
-      // 确保所有用户都有邀请码
-      let needsSave = false;
-      for (const user of users) {
-        if (!user.inviteCode) {
-          user.inviteCode = generateInviteCode();
-          needsSave = true;
-        }
-      }
-      if (needsSave) {
-        await saveUsers();
-      }
-    }
-
-    return users;
+    usersCache = await usersDB.getAllUsers();
+    return usersCache;
   } catch (e) {
-    console.warn('[Storage] 加载用户失败:', e);
-    users = [];
-    return users;
+    console.error('[Storage] Failed to load users:', e);
+    return [];
   }
 }
 
-async function saveUsers(): Promise<void> {
-  await writeFile(USERS_FILE, JSON.stringify(users, null, 2));
-}
-
 export function getAllUsers(): User[] {
-  return users;
+  return usersCache;
 }
 
 export function getUserById(id: string): User | undefined {
-  return users.find(u => u.id === id);
+  return usersCache.find(u => u.id === id);
 }
 
 export function getUserByUsername(username: string): User | undefined {
-  return users.find(u => u.username === username);
+  return usersCache.find(u => u.username === username);
 }
 
 export function getUserByEmail(email: string): User | undefined {
-  return users.find(u => u.email === email);
+  return usersCache.find(u => u.email === email);
 }
 
-export async function createUser(user: Omit<User, 'id' | 'createdAt'>): Promise<User> {
-  const newUser: User = {
-    ...user,
-    id: `user_${Date.now()}`,
-    createdAt: Date.now(),
-  };
-  users.push(newUser);
-  await saveUsers();
+export async function createUser(user: Omit<User, 'id'>): Promise<User> {
+  const newUser = await usersDB.createUser(user);
+  usersCache.push(newUser);
   return newUser;
 }
 
 export async function updateUser(id: string, updates: Partial<User>): Promise<User | null> {
-  const index = users.findIndex(u => u.id === id);
-  if (index === -1) return null;
-
-  users[index] = { ...users[index], ...updates };
-  await saveUsers();
-  return users[index];
+  const updated = await usersDB.updateUser(id, updates);
+  if (updated) {
+    const index = usersCache.findIndex(u => u.id === id);
+    if (index !== -1) {
+      usersCache[index] = updated;
+    }
+  }
+  return updated;
 }
 
 export async function deleteUser(id: string): Promise<boolean> {
-  const index = users.findIndex(u => u.id === id);
-  if (index === -1) return false;
-
-  users.splice(index, 1);
-  await saveUsers();
-  return true;
+  const deleted = await usersDB.deleteUser(id);
+  if (deleted) {
+    usersCache = usersCache.filter(u => u.id !== id);
+  }
+  return deleted;
 }
 
 // ==================== 使用记录管理 ====================
 
 export async function loadUsageRecords(): Promise<UsageRecord[]> {
-  if (usageRecords.length > 0) return usageRecords;
-
   try {
-    await ensureDir();
-    await ensureFile(USAGE_RECORDS_FILE, []);
-    const content = await readFile(USAGE_RECORDS_FILE, 'utf-8');
-    usageRecords = JSON.parse(content);
-    return usageRecords;
+    usageRecordsCache = await usageRecordsDB.getAllUsageRecords();
+    return usageRecordsCache;
   } catch (e) {
-    console.warn('[Storage] 加载使用记录失败:', e);
-    usageRecords = [];
-    return usageRecords;
+    console.error('[Storage] Failed to load usage records:', e);
+    return [];
   }
 }
 
-async function saveUsageRecords(): Promise<void> {
-  await writeFile(USAGE_RECORDS_FILE, JSON.stringify(usageRecords, null, 2));
+export function getAllUsageRecords(): UsageRecord[] {
+  return usageRecordsCache;
 }
 
 export async function createUsageRecord(record: Omit<UsageRecord, 'id'>): Promise<UsageRecord> {
-  const newRecord: UsageRecord = {
-    ...record,
-    id: `usage_${Date.now()}`,
-  };
-  usageRecords.push(newRecord);
-  await saveUsageRecords();
-
-  // 更新用户的总使用量和余额
-  const user = getUserById(record.userId);
-  if (user) {
-    await updateUser(record.userId, {
-      totalUsage: (user.totalUsage || 0) + record.totalTokens,
-      balance: user.balance - record.cost,
-    });
-  }
-
+  const newRecord = await usageRecordsDB.createUsageRecord(record);
+  usageRecordsCache.push(newRecord);
   return newRecord;
 }
 
 export function getUserUsageRecords(userId: string): UsageRecord[] {
-  // 只返回对应的有效 API Key 的使用记录
-  const validApiKeyIds = new Set(apiKeys.map(k => k.id));
-  return usageRecords.filter(r => r.userId === userId && validApiKeyIds.has(r.apiKeyId));
+  return usageRecordsCache.filter(r => r.userId === userId);
 }
 
-export function getUsageRecordsByDateRange(userId: string, startTime: number, endTime: number): UsageRecord[] {
-  // 只返回对应的有效 API Key 的使用记录
-  const validApiKeyIds = new Set(apiKeys.map(k => k.id));
-  return usageRecords.filter(r => r.userId === userId && r.timestamp >= startTime && r.timestamp <= endTime && validApiKeyIds.has(r.apiKeyId));
+export async function getUserUsageSummary(userId: string): Promise<{
+  totalTokens: number;
+  totalCost: number;
+  recordCount: number;
+}> {
+  return usageRecordsDB.getUserUsageSummary(userId);
 }
 
 // ==================== 账单管理 ====================
 
 export async function loadInvoices(): Promise<Invoice[]> {
-  if (invoices.length > 0) return invoices;
-
   try {
-    await ensureDir();
-    await ensureFile(INVOICES_FILE, []);
-    const content = await readFile(INVOICES_FILE, 'utf-8');
-    invoices = JSON.parse(content);
-    return invoices;
+    invoicesCache = await invoicesDB.getAllInvoices();
+    return invoicesCache;
   } catch (e) {
-    console.warn('[Storage] 加载账单失败:', e);
-    invoices = [];
-    return invoices;
+    console.error('[Storage] Failed to load invoices:', e);
+    return [];
   }
 }
 
-async function saveInvoices(): Promise<void> {
-  await writeFile(INVOICES_FILE, JSON.stringify(invoices, null, 2));
+export function getAllInvoices(): Invoice[] {
+  return invoicesCache;
 }
 
 export async function createInvoice(invoice: Omit<Invoice, 'id'>): Promise<Invoice> {
-  const newInvoice: Invoice = {
-    ...invoice,
-    id: `invoice_${Date.now()}`,
-  };
-  invoices.push(newInvoice);
-  await saveInvoices();
+  const newInvoice = await invoicesDB.createInvoice(invoice);
+  invoicesCache.push(newInvoice);
   return newInvoice;
 }
 
-export function getUserInvoices(userId: string): Invoice[] {
-  return invoices.filter(i => i.userId === userId);
-}
-
-export async function updateInvoice(id: string, updates: Partial<Invoice>): Promise<Invoice | null> {
-  const index = invoices.findIndex(i => i.id === id);
-  if (index === -1) return null;
-
-  invoices[index] = { ...invoices[index], ...updates };
-  await saveInvoices();
-  return invoices[index];
-}
-
-// ==================== Actions 管理 ====================
+// ==================== Action 管理 ====================
 
 export async function loadActions(): Promise<Action[]> {
-  if (actions.length > 0) return actions;
-
   try {
-    await ensureDir();
-    await ensureFile(ACTIONS_FILE, []);
-    const content = await readFile(ACTIONS_FILE, 'utf-8');
-    actions = JSON.parse(content);
-    return actions;
+    actionsCache = await actionsDB.getAllActions();
+    return actionsCache;
   } catch (e) {
-    console.warn('[Storage] 加载 Actions 失败:', e);
-    actions = [];
-    return actions;
+    console.error('[Storage] Failed to load actions:', e);
+    return [];
   }
 }
 
-async function saveActions(): Promise<void> {
-  await writeFile(ACTIONS_FILE, JSON.stringify(actions, null, 2));
-}
-
 export function getAllActions(): Action[] {
-  return actions;
+  return actionsCache;
 }
 
 export function getActionById(id: string): Action | undefined {
-  return actions.find(a => a.id === id);
+  return actionsCache.find(a => a.id === id);
 }
 
 export function getActionByName(name: string): Action | undefined {
-  return actions.find(a => a.name === name);
-}
-
-export function getActionsByCreator(userId: string): Action[] {
-  return actions.filter(a => a.createdBy === userId);
+  return actionsCache.find(a => a.name === name);
 }
 
 export function getPublicActions(): Action[] {
-  return actions.filter(a => a.isPublic);
+  return actionsCache.filter(a => a.isPublic);
+}
+
+export function getUserActions(userId: string): Action[] {
+  return actionsCache.filter(a => a.createdBy === userId);
 }
 
 export function getPublicAndUserActions(userId?: string): Action[] {
-  return actions.filter(a => a.isPublic || (userId && a.createdBy === userId));
+  return actionsCache.filter(a => a.isPublic || a.createdBy === userId);
 }
 
 export async function createAction(action: Omit<Action, 'id' | 'createdAt' | 'updatedAt' | 'version'>): Promise<Action> {
-  const newAction: Action = {
+  const now = Date.now();
+  const newAction = await actionsDB.createAction({
     ...action,
-    id: `action_${Date.now()}`,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
     version: 1,
-  };
-  actions.push(newAction);
-  await saveActions();
+  });
+  actionsCache.push(newAction);
   return newAction;
 }
 
 export async function updateAction(id: string, updates: Partial<Action>): Promise<Action | null> {
-  const index = actions.findIndex(a => a.id === id);
-  if (index === -1) return null;
-
-  actions[index] = {
-    ...actions[index],
+  const updated = await actionsDB.updateAction(id, {
     ...updates,
     updatedAt: Date.now(),
-    version: (actions[index].version || 0) + 1,
-  };
-  await saveActions();
-  return actions[index];
+  });
+  if (updated) {
+    const index = actionsCache.findIndex(a => a.id === id);
+    if (index !== -1) {
+      actionsCache[index] = updated;
+    }
+  }
+  return updated;
 }
 
 export async function deleteAction(id: string): Promise<boolean> {
-  const index = actions.findIndex(a => a.id === id);
-  if (index === -1) return false;
-
-  actions.splice(index, 1);
-  await saveActions();
-  return true;
-}
-
-export async function incrementActionUsage(id: string): Promise<void> {
-  const action = getActionById(id);
-  if (action) {
-    await updateAction(id, {
-      usageCount: (action.usageCount || 0) + 1,
-    });
+  const deleted = await actionsDB.deleteAction(id);
+  if (deleted) {
+    actionsCache = actionsCache.filter(a => a.id !== id);
   }
+  return deleted;
 }
 
-// ==================== 工作流管理 ====================
+// ==================== Workflow 管理 ====================
 
-let workflows: Workflow[] = [];
+let workflowsCache: Workflow[] = [];
 
 export async function loadWorkflows(): Promise<Workflow[]> {
-  if (workflows.length > 0) return workflows;
-
-  try {
-    await ensureDir();
-    await ensureFile(WORKFLOWS_FILE, []);
-    const content = await readFile(WORKFLOWS_FILE, 'utf-8');
-    workflows = JSON.parse(content);
-    return workflows;
-  } catch (e) {
-    console.warn('[Storage] 加载工作流失败:', e);
-    workflows = [];
-    return workflows;
-  }
-}
-
-async function saveWorkflows(): Promise<void> {
-  await writeFile(WORKFLOWS_FILE, JSON.stringify(workflows, null, 2));
+  // TODO: 实现 MongoDB workflow 存储
+  return workflowsCache;
 }
 
 export function getAllWorkflows(): Workflow[] {
-  return workflows;
+  return workflowsCache;
 }
 
 export function getWorkflowById(id: string): Workflow | undefined {
-  return workflows.find(w => w.id === id);
+  return workflowsCache.find(w => w.id === id);
 }
 
-export function getWorkflowsByCreator(userId: string): Workflow[] {
-  return workflows.filter(w => w.createdBy === userId);
+export function getUserWorkflows(userId: string): Workflow[] {
+  return workflowsCache.filter(w => w.createdBy === userId);
 }
 
-export function getPublicWorkflows(): Workflow[] {
-  return workflows.filter(w => w.isPublic);
-}
-
-export async function createWorkflow(workflow: Workflow): Promise<Workflow> {
-  workflows.push(workflow);
-  await saveWorkflows();
-  return workflow;
+export async function createWorkflow(workflow: Omit<Workflow, 'id' | 'createdAt' | 'updatedAt'>): Promise<Workflow> {
+  const now = Date.now();
+  const newWorkflow: Workflow = {
+    ...workflow,
+    id: `wf_${Date.now()}_${randomBytes(4).toString('hex')}`,
+    createdAt: now,
+    updatedAt: now,
+  };
+  workflowsCache.push(newWorkflow);
+  return newWorkflow;
 }
 
 export async function updateWorkflow(id: string, updates: Partial<Workflow>): Promise<Workflow | null> {
-  const index = workflows.findIndex(w => w.id === id);
+  const index = workflowsCache.findIndex(w => w.id === id);
   if (index === -1) return null;
 
-  workflows[index] = {
-    ...workflows[index],
+  workflowsCache[index] = {
+    ...workflowsCache[index],
     ...updates,
+    updatedAt: Date.now(),
   };
-  await saveWorkflows();
-  return workflows[index];
+  return workflowsCache[index];
 }
 
 export async function deleteWorkflow(id: string): Promise<boolean> {
-  const index = workflows.findIndex(w => w.id === id);
+  const index = workflowsCache.findIndex(w => w.id === id);
   if (index === -1) return false;
 
-  workflows.splice(index, 1);
-  await saveWorkflows();
+  workflowsCache.splice(index, 1);
   return true;
 }
 
 // ==================== 邀请记录管理 ====================
 
-let invitationRecords: InvitationRecord[] = [];
+let invitationsCache: InvitationRecord[] = [];
 
 export async function loadInvitationRecords(): Promise<InvitationRecord[]> {
-  if (invitationRecords.length > 0) return invitationRecords;
-
   try {
-    await ensureDir();
-    await ensureFile(INVITATIONS_FILE, []);
-    const content = await readFile(INVITATIONS_FILE, 'utf-8');
-    invitationRecords = JSON.parse(content);
-    return invitationRecords;
+    invitationsCache = await invitationsDB.getAllInvitationRecords();
+    return invitationsCache;
   } catch (e) {
-    console.warn('[Storage] 加载邀请记录失败:', e);
-    invitationRecords = [];
-    return invitationRecords;
+    console.error('[Storage] Failed to load invitations:', e);
+    return [];
   }
 }
 
-async function saveInvitationRecords(): Promise<void> {
-  await writeFile(INVITATIONS_FILE, JSON.stringify(invitationRecords, null, 2));
-}
-
 export function getAllInvitationRecords(): InvitationRecord[] {
-  return invitationRecords;
+  return invitationsCache;
 }
 
-export function getInvitationRecordsByInviter(inviterId: string): InvitationRecord[] {
-  return invitationRecords.filter(r => r.inviterId === inviterId);
-}
-
-export function getInvitationRecordsByInvitee(inviteeId: string): InvitationRecord | undefined {
-  return invitationRecords.find(r => r.inviteeId === inviteeId);
-}
-
-export async function createInvitationRecord(record: Omit<InvitationRecord, 'id'>): Promise<InvitationRecord> {
-  const newRecord: InvitationRecord = {
-    ...record,
-    id: `inv_${Date.now()}`,
-  };
-  invitationRecords.push(newRecord);
-  await saveInvitationRecords();
+export async function createInvitationRecord(record: Omit<InvitationRecord, 'id' | 'createdAt'>): Promise<InvitationRecord> {
+  const newRecord = await invitationsDB.createInvitationRecord(record);
+  invitationsCache.push(newRecord);
   return newRecord;
 }
 
-// 生成邀请码
-export function generateInviteCode(): string {
-  return randomBytes(6).toString('base64url').toUpperCase();
-}
-
-// 根据邀请码查找用户
-export function getUserByInviteCode(inviteCode: string): User | undefined {
-  return users.find(u => u.inviteCode === inviteCode);
-}
-
-// 获取用户本月邀请数量
-export function getMonthlyInviteCount(inviterId: string): number {
-  const now = Date.now();
-  const oneMonthAgo = now - 30 * 24 * 60 * 60 * 1000;
-  return invitationRecords.filter(
-    r => r.inviterId === inviterId && r.createdAt >= oneMonthAgo
-  ).length;
-}
-
-// 获取用户可用邀请次数
-export function getAvailableInviteQuota(user: User): number {
-  // admin 无限次数
-  if (user.role === 'admin') return Infinity;
-  
-  const monthlyUsed = getMonthlyInviteCount(user.id);
-  const monthlyQuota = 5; // 每月5次
-  const extraQuota = user.extraInviteQuota || 0;
-  
-  return Math.max(0, monthlyQuota - monthlyUsed) + extraQuota;
+export function getInvitationsByInviter(inviterId: string): InvitationRecord[] {
+  return invitationsCache.filter(r => r.inviterId === inviterId);
 }
 
 // ==================== 通知管理 ====================
 
-let notifications: Notification[] = [];
-
 export async function loadNotifications(): Promise<Notification[]> {
-  if (notifications.length > 0) return notifications;
-
   try {
-    await ensureDir();
-    await ensureFile(NOTIFICATIONS_FILE, []);
-    const content = await readFile(NOTIFICATIONS_FILE, 'utf-8');
-    notifications = JSON.parse(content);
-    return notifications;
+    notificationsCache = await notificationsDB.getAllNotifications();
+    return notificationsCache;
   } catch (e) {
-    console.warn('[Storage] 加载通知失败:', e);
-    notifications = [];
-    return notifications;
+    console.error('[Storage] Failed to load notifications:', e);
+    return [];
   }
 }
 
-async function saveNotifications(): Promise<void> {
-  await writeFile(NOTIFICATIONS_FILE, JSON.stringify(notifications, null, 2));
-}
-
 export function getAllNotifications(): Notification[] {
-  return notifications;
+  return notificationsCache;
 }
 
 export function getActiveNotifications(): Notification[] {
-  return notifications
+  return notificationsCache
     .filter(n => n.isActive !== false)
     .sort((a, b) => {
-      // 置顶优先，然后按创建时间倒序
       if (a.isPinned && !b.isPinned) return -1;
       if (!a.isPinned && b.isPinned) return 1;
       return b.createdAt - a.createdAt;
@@ -822,39 +536,123 @@ export function getActiveNotifications(): Notification[] {
 }
 
 export function getNotificationById(id: string): Notification | undefined {
-  return notifications.find(n => n.id === id);
+  return notificationsCache.find(n => n.id === id);
 }
 
 export async function createNotification(notification: Omit<Notification, 'id' | 'createdAt'>): Promise<Notification> {
-  const newNotification: Notification = {
+  const newNotification = await notificationsDB.createNotification({
     ...notification,
-    id: `notif_${Date.now()}`,
-    createdAt: Date.now(),
     isActive: true,
-  };
-  notifications.push(newNotification);
-  await saveNotifications();
+  });
+  notificationsCache.push(newNotification);
   return newNotification;
 }
 
 export async function updateNotification(id: string, updates: Partial<Notification>): Promise<Notification | null> {
-  const index = notifications.findIndex(n => n.id === id);
-  if (index === -1) return null;
-
-  notifications[index] = {
-    ...notifications[index],
+  const updated = await notificationsDB.updateNotification(id, {
     ...updates,
     updatedAt: Date.now(),
-  };
-  await saveNotifications();
-  return notifications[index];
+  });
+  if (updated) {
+    const index = notificationsCache.findIndex(n => n.id === id);
+    if (index !== -1) {
+      notificationsCache[index] = updated;
+    }
+  }
+  return updated;
 }
 
 export async function deleteNotification(id: string): Promise<boolean> {
-  const index = notifications.findIndex(n => n.id === id);
-  if (index === -1) return false;
+  const deleted = await notificationsDB.deleteNotification(id);
+  if (deleted) {
+    notificationsCache = notificationsCache.filter(n => n.id !== id);
+  }
+  return deleted;
+}
 
-  notifications.splice(index, 1);
-  await saveNotifications();
-  return true;
+// ==================== 额外的辅助函数 ====================
+
+// 获取用户创建的 Actions
+export function getActionsByCreator(userId: string): Action[] {
+  return actionsCache.filter(a => a.createdBy === userId);
+}
+
+// 增加 Action 使用次数
+export async function incrementActionUsage(id: string): Promise<void> {
+  const action = actionsCache.find(a => a.id === id);
+  if (action) {
+    action.usageCount = (action.usageCount || 0) + 1;
+    await actionsDB.updateAction(id, { usageCount: action.usageCount });
+  }
+}
+
+// 获取邀请记录（别名）
+export function getInvitationRecordsByInviter(inviterId: string): InvitationRecord[] {
+  return getInvitationsByInviter(inviterId);
+}
+
+// 根据邀请码获取用户
+export function getUserByInviteCode(inviteCode: string): User | undefined {
+  return usersCache.find(u => u.inviteCode === inviteCode);
+}
+
+// 获取可用邀请配额
+export function getAvailableInviteQuota(userId: string): number {
+  const user = usersCache.find(u => u.id === userId);
+  if (!user) return 0;
+  
+  // 基础配额 + 额外购买配额
+  const baseQuota = 10; // 基础邀请配额
+  const extraQuota = user.extraInviteQuota || 0;
+  
+  // 已使用的邀请次数
+  const usedCount = invitationsCache.filter(r => r.inviterId === userId).length;
+  
+  return Math.max(0, baseQuota + extraQuota - usedCount);
+}
+
+// 生成邀请码
+export function generateInviteCode(): string {
+  return `INV-${randomBytes(6).toString('hex').toUpperCase()}`;
+}
+
+// 获取完整的 API Key（包含 key 字段）
+export async function getFullApiKey(id: string): Promise<ApiKey | null> {
+  const apiKey = await apiKeysDB.getApiKey(id);
+  return apiKey;
+}
+
+// 获取日期范围内的使用记录
+export function getUsageRecordsByDateRange(userId: string, startDate: Date, endDate: Date): UsageRecord[] {
+  return usageRecordsCache.filter(r => 
+    r.userId === userId && 
+    r.timestamp >= startDate.getTime() && 
+    r.timestamp <= endDate.getTime()
+  );
+}
+
+// 获取用户账单
+export function getUserInvoices(userId: string): Invoice[] {
+  return invoicesCache.filter(i => i.userId === userId);
+}
+
+// 获取月度邀请数量
+export function getMonthlyInviteCount(userId: string): number {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  
+  return invitationsCache.filter(r => 
+    r.inviterId === userId && 
+    r.createdAt >= startOfMonth.getTime()
+  ).length;
+}
+
+// 获取用户创建的工作流
+export function getWorkflowsByCreator(userId: string): Workflow[] {
+  return workflowsCache.filter(w => w.createdBy === userId);
+}
+
+// 获取公开的工作流
+export function getPublicWorkflows(): Workflow[] {
+  return workflowsCache.filter(w => w.isPublic);
 }

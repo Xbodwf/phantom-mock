@@ -7,19 +7,32 @@ import {
   useMediaQuery,
 } from '@mui/material';
 import { Inbox } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useServer } from '../contexts/ServerContext';
 import RequestCard from './RequestCard';
 
 export default function RequestList() {
-  const { pendingRequests } = useServer();
+  const { t } = useTranslation();
+  const { pendingRequests, models } = useServer();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
+  // 获取允许人工回复的模型ID集合
+  const manualReplyModelIds = useMemo(() => {
+    const ids = new Set<string>();
+    models.forEach(model => {
+      if (model.allowManualReply) {
+        ids.add(model.id);
+      }
+    });
+    return ids;
+  }, [models]);
+
   const requests = useMemo(() => {
-    return Array.from(pendingRequests.entries()).sort(
-      (a, b) => b[1].createdAt - a[1].createdAt
-    );
-  }, [pendingRequests]);
+    return Array.from(pendingRequests.entries())
+      .filter(([, request]) => manualReplyModelIds.has(request.request.model))
+      .sort((a, b) => b[1].createdAt - a[1].createdAt);
+  }, [pendingRequests, manualReplyModelIds]);
 
   if (requests.length === 0) {
     return (
@@ -37,7 +50,7 @@ export default function RequestList() {
         >
           <Inbox size={80} style={{ marginBottom: 16, opacity: 0.3 }} />
           <Typography variant="h6" sx={{ mb: 1 }}>
-            等待请求中...
+            {t('requests.waitingForRequests')}
           </Typography>
           <Typography 
             variant="body2" 
@@ -46,7 +59,14 @@ export default function RequestList() {
               fontSize: isMobile ? '0.85rem' : '0.875rem',
             }}
           >
-            当有 API 请求到达时会自动显示在这里
+            {t('requests.requestWillAppear')}
+          </Typography>
+          <Typography 
+            variant="caption" 
+            color="text.secondary"
+            sx={{ mt: 1 }}
+          >
+            {t('requests.manualReplyHint', '提示：只有开启了"允许人工回复"的模型的请求才会显示')}
           </Typography>
         </Box>
       </Fade>
@@ -63,7 +83,7 @@ export default function RequestList() {
           fontSize: isMobile ? '0.8rem' : '0.875rem',
         }}
       >
-        共 {requests.length} 个待处理请求
+        {t('requests.totalRequests', '共 {{count}} 个待处理请求', { count: requests.length })}
       </Typography>
       {requests.map(([requestId, request]) => (
         <RequestCard key={requestId} requestId={requestId} request={request} />

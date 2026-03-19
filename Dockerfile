@@ -21,7 +21,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --prod --frozen-lockfile && pnpm store prune && rm -rf /tmp/*
 COPY --from=builder /app/dist ./dist
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /app/static/models
 EXPOSE 7143
 ENV NODE_ENV=production
 ENV PORT=7143

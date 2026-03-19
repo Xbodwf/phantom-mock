@@ -276,7 +276,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
-      const response = await fetch(`/api/models/${id}`, {
+      const response = await fetch(`/api/models/${encodeURIComponent(id)}`, {
         method: 'PUT',
         headers,
         body: JSON.stringify(model),
@@ -298,7 +298,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
-      const response = await fetch(`/api/models/${id}`, { method: 'DELETE', headers });
+      const response = await fetch(`/api/models/${encodeURIComponent(id)}`, { method: 'DELETE', headers });
       if (response.ok) {
         await fetchModels();
       } else {

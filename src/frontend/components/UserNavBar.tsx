@@ -13,8 +13,9 @@ import {
   ListItem,
   ListItemButton,
   ListItemText,
+  Divider,
 } from '@mui/material';
-import { Menu as MenuIcon, LogOut } from 'lucide-react';
+import { Menu as MenuIcon, LogOut, Settings } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -29,6 +30,8 @@ export function UserNavBar() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  const isAdmin = user?.role === 'admin';
 
   const menuItems = [
     { label: t('userNav.dashboard'), path: '/dashboard' },
@@ -70,6 +73,16 @@ export function UserNavBar() {
             </ListItemButton>
           </ListItem>
         ))}
+        {isAdmin && (
+          <>
+            <Divider sx={{ my: 1 }} />
+            <ListItem disablePadding>
+              <ListItemButton onClick={() => handleNavigate('/console/dashboard')}>
+                <ListItemText primary={t('userNav.adminConsole', '管理员控制台')} />
+              </ListItemButton>
+            </ListItem>
+          </>
+        )}
       </List>
       <Box sx={{ p: 2, borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
         <Button
@@ -130,6 +143,17 @@ export function UserNavBar() {
                 <Typography variant="body2" sx={{ mr: 2 }}>
                   {user?.username}
                 </Typography>
+                {isAdmin && (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    color="secondary"
+                    startIcon={<Settings size={18} />}
+                    onClick={() => navigate('/console/dashboard')}
+                  >
+                    {t('userNav.adminConsole', '控制台')}
+                  </Button>
+                )}
                 <ThemeSwitcher />
                 <LanguageSwitcher />
                 <Button

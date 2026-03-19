@@ -1,6 +1,14 @@
 import axios from 'axios';
 import type { ChatCompletionRequest, Model } from './types.js';
 import type { Response } from 'express';
+import { generateRequestId } from './responseBuilder.js';
+
+/**
+ * 获取转发时使用的模型名称
+ */
+function getForwardModelName(model: Model, requestedModel: string): string {
+  return model.forwardModelName || requestedModel;
+}
 
 /**
  * 转发请求到真实的 API
@@ -50,6 +58,9 @@ export async function forwardStreamRequest(
     throw new Error('Model not configured for forwarding');
   }
 
+  // 生成统一的请求 ID
+  const requestId = generateRequestId();
+
   // 设置流式响应头
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -61,7 +72,11 @@ export async function forwardStreamRequest(
     url = `${url}/chat/completions`;
   }
 
-  const response = await axios.post(url, body, {
+  // 使用转发模型名称
+  const forwardModel = getForwardModelName(model, body.model);
+  const forwardBody = { ...body, model: forwardModel };
+
+  const response = await axios.post(url, forwardBody, {
     headers: {
       'Authorization': `Bearer ${model.api_key}`,
       'Content-Type': 'application/json',
@@ -70,9 +85,19 @@ export async function forwardStreamRequest(
     responseType: 'stream',
   });
 
-  // 直接透传流
+  // 处理流数据，统一 id 格式
+  let firstChunk = true;
   response.data.on('data', (chunk: Buffer) => {
-    res.write(chunk);
+    let chunkStr = chunk.toString();
+    
+    // 替换流中的 id 为统一格式
+    // 匹配 "id":"xxx" 或 "id": "xxx" 格式
+    chunkStr = chunkStr.replace(
+      /"id"\s*:\s*"[^"]*"/g,
+      `"id":"${requestId}"`
+    );
+    
+    res.write(chunkStr);
   });
 
   response.data.on('end', () => {
@@ -98,7 +123,11 @@ async function forwardToOpenAI(
     url = `${url}/chat/completions`;
   }
 
-  const response = await axios.post(url, body, {
+  // 使用转发模型名称
+  const forwardModel = getForwardModelName(model, body.model);
+  const forwardBody = { ...body, model: forwardModel };
+
+  const response = await axios.post(url, forwardBody, {
     headers: {
       'Authorization': `Bearer ${model.api_key}`,
       'Content-Type': 'application/json',
@@ -106,6 +135,11 @@ async function forwardToOpenAI(
     timeout: 120000, // 2 分钟超时
     responseType: body.stream ? 'stream' : 'json',
   });
+
+  // 非流式响应：统一 id 格式
+  if (!body.stream && response.data) {
+    response.data.id = generateRequestId();
+  }
 
   return { success: true, response: response.data };
 }
@@ -119,12 +153,15 @@ async function forwardToAnthropic(
 ): Promise<{ success: true; response: any }> {
   const url = `${model.api_base_url}/v1/messages`;
 
+  // 使用转发模型名称
+  const forwardModel = getForwardModelName(model, body.model);
+
   // 转换消息格式：OpenAI -> Anthropic
   const systemMessages = body.messages.filter(m => m.role === 'system');
   const nonSystemMessages = body.messages.filter(m => m.role !== 'system');
 
   const anthropicBody = {
-    model: body.model,
+    model: forwardModel,
     messages: nonSystemMessages.map(m => ({
       role: m.role === 'assistant' ? 'assistant' : 'user',
       content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
@@ -152,7 +189,7 @@ async function forwardToAnthropic(
     return {
       success: true,
       response: {
-        id: anthropicResponse.id,
+        id: generateRequestId(),
         object: 'chat.completion',
         created: Math.floor(Date.now() / 1000),
         model: body.model,
@@ -183,7 +220,9 @@ async function forwardToGoogle(
   model: Model,
   body: ChatCompletionRequest
 ): Promise<{ success: true; response: any }> {
-  const url = `${model.api_base_url}/v1beta/models/${body.model}:generateContent?key=${model.api_key}`;
+  // 使用转发模型名称
+  const forwardModel = getForwardModelName(model, body.model);
+  const url = `${model.api_base_url}/v1beta/models/${forwardModel}:generateContent?key=${model.api_key}`;
 
   // 转换消息格式：OpenAI -> Google
   const contents = body.messages.map(m => ({
@@ -214,7 +253,7 @@ async function forwardToGoogle(
   return {
     success: true,
     response: {
-      id: `chatcmpl-${Date.now()}`,
+      id: generateRequestId(),
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
       model: body.model,

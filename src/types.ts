@@ -70,6 +70,17 @@ export interface Model {
   owned_by: string;
   description?: string;
   context_length?: number;
+  icon?: string; // 模型图标路径（相对于 /static/models/）
+  
+  // 模型分类和标签
+  modelType?: string;             // 模型类型（如 chat, image, video, embedding）
+  modelSize?: string;             // 模型大小（如 7B, 13B, 70B）
+  modelSuffix?: string;           // 模型后缀（如 -instruct, -chat）
+  ownerId?: string;               // 归属人ID（用户ID）
+  tags?: string[];                // 模型标签（用于标记类型，如专属机房等）
+  category?: 'chat' | 'image' | 'video' | 'custom'; // 模型分类
+  capabilities?: string[];        // 模型能力列表
+  
   // 新增字段
   aliases?: string[]; // 模型别名列表
   max_output_tokens?: number; // 最大输出token数
@@ -81,11 +92,25 @@ export interface Model {
     perRequest?: number; // 按请求计费时的单价（美元）
     cacheRead?: number; // 缓存读取价格（美元）
   };
+  
+  // 速率限制
+  rpm?: number;                   // 每分钟请求数限制 (Requests Per Minute)
+  tpm?: number;                   // 每分钟Token数限制 (Tokens Per Minute)
+  
+  // 并发和队列控制
+  maxConcurrentRequests?: number; // 最大同时请求数
+  concurrentQueues?: number;      // 同时进行队列数（可同时服务多少用户）
+  allowOveruse?: number;          // 允许超开倍率（0为不允许，1往上则为最大同时请求数*倍率）
+  
+  // API 配置
   api_key?: string; // 模型关联的API密钥（用于转发）
   api_base_url?: string; // API基础URL（用于转发）
   api_type?: 'openai' | 'anthropic' | 'google' | 'azure' | 'custom'; // API接口类型（用于转发）
+  forwardModelName?: string; // 转发时使用的模型名称（不同平台模型名称可能不同）
   supported_features?: string[]; // 支持的特性，如 ['chat', 'vision', 'function_calling']
   require_api_key?: boolean; // 是否需要API Key才能访问（默认true）
+  allowManualReply?: boolean; // 是否允许人工回复（允许的模型才会在请求列表中显示）
+  
   // 组合模型字段
   isComposite?: boolean;           // 是否为组合模型
   actions?: string[];              // Action IDs 列表
@@ -96,8 +121,22 @@ export interface Model {
   }>;
   createdBy?: string;              // 用户自定义模型的创建者
   isPublic?: boolean;              // 是否公开
-  tags?: string[];                 // 模型标签
-  category?: 'chat' | 'image' | 'video' | 'custom'; // 模型分类
+  
+  // 评价系统
+  rating?: {
+    positiveCount?: number;        // 好评数量
+    negativeCount?: number;        // 差评数量
+    averageScore?: number;         // 平均评分 (0-5)
+    ratings?: Map<string, number>; // 评价详情 (userId -> score)
+  };
+  
+  // 举报信息
+  reports?: Array<{
+    userId: string;
+    reason: string;
+    timestamp: number;
+    status: 'pending' | 'reviewed' | 'resolved';
+  }>;
 }
 
 // API Key 定义
@@ -128,21 +167,39 @@ export interface User {
   username: string;                // 唯一用户名
   email: string;                   // 唯一邮箱
   passwordHash: string;            // bcrypt 哈希密码
+  
+  // 余额和使用
   balance: number;                 // 账户余额（美元）
   totalUsage: number;              // 总 token 使用量
+  
+  // 权限和角色
+  role: 'user' | 'admin';          // 用户角色
+  permissionLevel?: number;        // 权限等级（数字越大权限越高，默认普通用户为0，管理员为100）
+  
+  // 邀请系统相关
+  inviteCode?: string;             // 用户的邀请码
+  invitedBy?: string;              // 邀请人 ID
+  extraInviteQuota?: number;       // 额外购买的邀请次数
+  
+  // 用户拥有的资源
+  ownedModels?: string[];          // 自属模型ID列表
+  actions?: string[];              // 用户创建的 Actions
+  
+  // 实名信息（可选）
+  realName?: string;               // 身份证名字
+  idCardNumber?: string;           // 身份证ID
+  
+  // 时间戳
   createdAt: number;               // 创建时间
   lastLoginAt?: number;            // 最后登录时间
   enabled: boolean;                // 账户是否启用
-  role: 'user' | 'admin';          // 用户角色
+  
+  // 用户设置
   settings?: {
     emailNotifications?: boolean;  // 邮件通知
     apiKeyExpiry?: number;         // API Key 过期时间（天）
     theme?: ThemeConfig;           // 用户主题偏好
   };
-  // 邀请系统相关
-  inviteCode?: string;             // 用户的邀请码
-  invitedBy?: string;              // 邀请人 ID
-  extraInviteQuota?: number;       // 额外购买的邀请次数
 }
 
 // 邀请记录
@@ -172,13 +229,39 @@ export interface UsageRecord {
   userId: string;
   apiKeyId: string;
   model: string;
+  modelId?: string;                // 模型ID
   endpoint: string;               // 'chat', 'image', 'video'
+  
+  // 请求和响应内容
+  requestContent?: string;         // 请求内容
+  responseContent?: string;        // 生成结果
+  response?: string;               // 模型生成的主要文本内容
+  message?: string;                // 聊天消息对象内容
+  
+  // Token 统计
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  
+  // 费用
   cost: number;                   // 美元
+  balanceAfter?: number;          // 扣费后余额
+  
+  // 时间戳
   timestamp: number;
   requestId: string;
+  createdAt?: number;             // 响应创建时间
+  
+  // 性能指标
+  totalDuration?: number;         // 生成整个响应的总耗时（纳秒）
+  loadDuration?: number;          // 加载模型耗时（纳秒）
+  promptEvalCount?: number;       // 输入提示评估的token数量
+  promptEvalDuration?: number;    // 评估输入提示所花费的时间（纳秒）
+  evalCount?: number;             // 模型生成的token数量
+  evalDuration?: number;          // 生成token所花费的时间（纳秒）
+  
+  // 完成原因
+  doneReason?: 'stop' | 'length' | 'cancel'; // 生成停止的原因
 }
 
 // 账单

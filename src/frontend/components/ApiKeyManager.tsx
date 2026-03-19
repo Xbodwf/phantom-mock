@@ -23,6 +23,7 @@ import {
   Divider,
 } from '@mui/material';
 import { Key, Plus, Trash2, Copy, Calendar, Clock, Eye, Edit2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useServer } from '../contexts/ServerContext';
 import { ApiKeyEditDialog } from './ApiKeyEditDialog';
 import { copyToClipboard as copyText } from '../utils/clipboard';
@@ -31,6 +32,7 @@ import type { ApiKey } from '../types';
 import axios from 'axios';
 
 export default function ApiKeyManager() {
+  const { t } = useTranslation();
   const { apiKeys, createApiKey, updateApiKey, deleteApiKey, models } = useServer();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
@@ -67,12 +69,12 @@ export default function ApiKeyManager() {
         ...prev,
         [id]: { key: response.data.key, remainingViews: response.data.remainingViews }
       }));
-      setSnackbar(`密钥已显示，剩余查看次数: ${response.data.remainingViews}`);
+      setSnackbar(t('apiKeys.revealedRemaining', '密钥已显示，剩余查看次数: {{count}}', { count: response.data.remainingViews }));
     } catch (e: any) {
       if (e.response?.status === 403) {
-        setSnackbar('查看次数已用完');
+        setSnackbar(t('apiKeys.noViewsRemaining', '查看次数已用完'));
       } else {
-        setSnackbar('查看失败');
+        setSnackbar(t('apiKeys.revealFailed', '查看失败'));
       }
     }
   };
@@ -85,18 +87,18 @@ export default function ApiKeyManager() {
   const handleSaveEdit = async (id: string, updates: Partial<ApiKey>) => {
     await updateApiKey(id, updates);
     setEditDialogOpen(false);
-    setSnackbar('已更新');
+    setSnackbar(t('apiKeys.updateSuccess', '已更新'));
   };
 
   const handleCreateKey = async () => {
     if (!newKeyName.trim()) return;
     try {
       const apiKey = await createApiKey(newKeyName.trim());
-      setNewKey(apiKey.key || ''); // 显示完整的 key（首次创建不计入查看次数）
+      setNewKey(apiKey.key || '');
       setNewKeyName('');
       setDialogOpen(false);
     } catch (e) {
-      setSnackbar('创建失败');
+      setSnackbar(t('apiKeys.failedToCreate'));
     }
   };
 
@@ -104,24 +106,24 @@ export default function ApiKeyManager() {
     try {
       await updateApiKey(id, { enabled });
     } catch (e) {
-      setSnackbar('更新失败');
+      setSnackbar(t('apiKeys.failedToUpdate'));
     }
   };
 
   const handleDeleteKey = async (id: string) => {
-    if (!confirm('确定要删除这个 API Key 吗？')) return;
+    if (!confirm(t('apiKeys.confirmDelete'))) return;
     try {
       await deleteApiKey(id);
-      setSnackbar('已删除');
+      setSnackbar(t('common.delete') + t('common.success'));
     } catch (e) {
-      setSnackbar('删除失败');
+      setSnackbar(t('apiKeys.failedToDelete'));
     }
   };
 
   const copyToClipboard = (text: string) => {
     copyText(text)
-      .then(() => setSnackbar('已复制到剪贴板'))
-      .catch(() => setSnackbar('复制失败'));
+      .then(() => setSnackbar(t('apiKeys.copyToClipboard')))
+      .catch(() => setSnackbar(t('errors.failedToCopy')));
   };
 
   const formatDateDisplay = (timestamp: number) => {
@@ -132,14 +134,14 @@ export default function ApiKeyManager() {
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h5" sx={{ fontWeight: 600 }}>
-          API 密钥管理
+          {t('apiKeys.title')}
         </Typography>
         <Button
           variant="contained"
           startIcon={<Plus size={18} />}
           onClick={() => setDialogOpen(true)}
         >
-          创建密钥
+          {t('apiKeys.createKey')}
         </Button>
       </Box>
 
@@ -148,7 +150,7 @@ export default function ApiKeyManager() {
           <CardContent sx={{ textAlign: 'center', py: 6 }}>
             <Key size={48} style={{ opacity: 0.3, marginBottom: 16 }} />
             <Typography color="text.secondary">
-              暂无 API 密钥，点击上方按钮创建
+              {t('apiKeys.noApiKeys')}
             </Typography>
           </CardContent>
         </Card>
@@ -161,7 +163,7 @@ export default function ApiKeyManager() {
                 <ListItem
                   sx={{
                     py: 2,
-                    pr: 25, // 给右侧按钮留出足够空间
+                    pr: 25,
                   }}
                 >
                   <ListItemText
@@ -171,7 +173,7 @@ export default function ApiKeyManager() {
                           {key.name}
                         </Typography>
                         <Chip
-                          label={key.enabled ? '启用' : '禁用'}
+                          label={key.enabled ? t('common.active') : t('common.disabled')}
                           size="small"
                           color={key.enabled ? 'success' : 'default'}
                         />
@@ -185,18 +187,18 @@ export default function ApiKeyManager() {
                         <Box sx={{ display: 'flex', gap: 2, color: 'text.secondary', fontSize: '0.75rem' }}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                             <Calendar size={12} />
-                            创建: {formatDateDisplay(key.createdAt)}
+                            {t('common.created')}: {formatDateDisplay(key.createdAt)}
                           </Box>
                           {key.lastUsedAt && (
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                               <Clock size={12} />
-                              最后使用: {formatDateDisplay(key.lastUsedAt)}
+                              {t('apiKeys.lastUsed')}: {formatDateDisplay(key.lastUsedAt)}
                             </Box>
                           )}
                           {key.viewCount !== undefined && (
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                               <Eye size={12} />
-                              已查看: {key.viewCount}/3
+                              {t('apiKeys.viewCount', '已查看')}: {key.viewCount}/3
                             </Box>
                           )}
                         </Box>
@@ -209,7 +211,7 @@ export default function ApiKeyManager() {
                         <IconButton
                           size="small"
                           onClick={() => handleRevealKey(key.id)}
-                          title="查看密钥"
+                          title={t('apiKeys.revealKey', '查看密钥')}
                         >
                           <Eye size={18} />
                         </IconButton>
@@ -217,7 +219,7 @@ export default function ApiKeyManager() {
                       <IconButton
                         size="small"
                         onClick={() => handleEditKey(key)}
-                        title="编辑权限"
+                        title={t('apiKeys.editKey')}
                       >
                         <Edit2 size={18} />
                       </IconButton>
@@ -249,32 +251,32 @@ export default function ApiKeyManager() {
 
       {/* 创建密钥对话框 */}
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>创建新的 API 密钥</DialogTitle>
+        <DialogTitle>{t('apiKeys.createNewKey')}</DialogTitle>
         <DialogContent>
           <TextField
             autoFocus
-            label="密钥名称"
+            label={t('apiKeys.keyName')}
             fullWidth
             value={newKeyName}
             onChange={(e) => setNewKeyName(e.target.value)}
-            placeholder="例如：生产环境密钥"
+            placeholder={t('apiKeys.keyNamePlaceholder')}
             sx={{ mt: 1 }}
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>取消</Button>
+          <Button onClick={() => setDialogOpen(false)}>{t('common.cancel')}</Button>
           <Button variant="contained" onClick={handleCreateKey} disabled={!newKeyName.trim()}>
-            创建
+            {t('common.save')}
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* 显示新创建的密钥 */}
       <Dialog open={!!newKey} onClose={() => setNewKey(null)} maxWidth="sm" fullWidth>
-        <DialogTitle>密钥已创建</DialogTitle>
+        <DialogTitle>{t('apiKeys.keyCreatedSuccessfully')}</DialogTitle>
         <DialogContent>
           <Alert severity="warning" sx={{ mb: 2 }}>
-            请立即复制并保存此密钥，您还有 3 次查看机会！
+            {t('apiKeys.saveKeySecurely')}
           </Alert>
           <Box
             sx={{
@@ -304,7 +306,7 @@ export default function ApiKeyManager() {
               setNewKey(null);
             }}
           >
-            复制并关闭
+            {t('apiKeys.copyToClipboard')}
           </Button>
         </DialogActions>
       </Dialog>

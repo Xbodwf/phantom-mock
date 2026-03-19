@@ -169,22 +169,17 @@ router.post('/api-keys', authMiddleware, async (req: AuthRequest, res: Response)
       return res.status(400).json({ error: 'Missing API key name' });
     }
 
-    const apiKey = await createApiKey(name, {
+    const apiKey = await createApiKey(name, req.userId, {
       models: [],
       endpoints: ['chat', 'image', 'video'],
     });
-
-    // 关联到用户
-    await updateApiKey(apiKey.id, { userId: req.userId });
-
-    const fullKey = getFullApiKey(apiKey.id);
 
     res.status(201).json({
       success: true,
       key: {
         id: apiKey.id,
         name: apiKey.name,
-        key: fullKey,
+        key: apiKey.key, // 返回完整的 key 字符串
         createdAt: apiKey.createdAt,
       },
       message: 'Save this key securely. You will not be able to see it again.',
@@ -351,8 +346,8 @@ router.get('/usage/records', authMiddleware, (req: AuthRequest, res: Response) =
     let records = getUserUsageRecords(req.userId!);
 
     if (startDate && endDate) {
-      const start = new Date(startDate as string).getTime();
-      const end = new Date(endDate as string).getTime();
+      const start = new Date(startDate as string);
+      const end = new Date(endDate as string);
       records = getUsageRecordsByDateRange(req.userId!, start, end);
     }
 
@@ -375,7 +370,7 @@ router.get('/invitation', authMiddleware, (req: AuthRequest, res: Response) => {
     }
 
     const invitationRecords = getInvitationRecordsByInviter(req.userId!);
-    const availableQuota = getAvailableInviteQuota(user);
+    const availableQuota = getAvailableInviteQuota(user.id);
     const monthlyUsed = getMonthlyInviteCount(req.userId!);
 
     // 获取被邀请人的详细信息
