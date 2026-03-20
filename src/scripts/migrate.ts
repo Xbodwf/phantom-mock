@@ -15,6 +15,8 @@ const dataFiles: DataFile[] = [
     collection: 'users',
     transform: (item) => ({
       ...item,
+      // 确保保留业务 id 字段
+      id: item.id,
       _id: new ObjectId(),
       createdAt: new Date(item.createdAt),
       lastLoginAt: item.lastLoginAt ? new Date(item.lastLoginAt) : undefined,
@@ -25,6 +27,8 @@ const dataFiles: DataFile[] = [
     collection: 'apiKeys',
     transform: (item) => ({
       ...item,
+      // 确保保留业务 id 字段
+      id: item.id,
       _id: new ObjectId(),
       createdAt: new Date(item.createdAt),
       lastUsedAt: item.lastUsedAt ? new Date(item.lastUsedAt) : undefined,
