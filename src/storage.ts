@@ -243,6 +243,22 @@ export async function validateApiKey(key: string): Promise<ApiKey | null> {
     return null;
   }
   
+  // 检查用户是否存在且启用
+  const user = getUserById(apiKey.userId);
+  if (!user) {
+    // 用户不存在，删除孤儿 API key
+    console.log(`[API Key] Orphan API key detected: ${apiKey.id}, userId: ${apiKey.userId}, deleting...`);
+    if (apiKey.id) {
+      await deleteApiKey(apiKey.id);
+    }
+    return null;
+  }
+  
+  if (!user.enabled) {
+    // 用户已禁用
+    return null;
+  }
+  
   // 更新最后使用时间
   await apiKeysDB.updateApiKey(apiKey.id, { lastUsedAt: Date.now() });
   

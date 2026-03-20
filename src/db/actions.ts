@@ -1,7 +1,7 @@
 import { toEntity, toEntities } from './utils';
 import { getDB } from './connection';
 import { Action } from '../types';
-import { ObjectId } from 'mongodb';
+import { ObjectId, MongoServerError } from 'mongodb';
 
 const COLLECTION_NAME = 'actions';
 
@@ -9,14 +9,35 @@ export async function createAction(action: Omit<Action, 'id'> & { _id?: ObjectId
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
 
+  // 检查是否已存在同名的 action（同一用户）
+  if (action.createdBy) {
+    const existing = await collection.findOne({ 
+      createdBy: action.createdBy, 
+      name: action.name 
+    });
+    if (existing) {
+      throw new Error(`Action with name "${action.name}" already exists for this user`);
+    }
+  }
+
   const doc = {
     ...action,
     _id: action._id || new ObjectId(),
     createdAt: new Date(),
     updatedAt: new Date(),
+    isPublic: action.isPublic ?? false, // 默认不公开
   };
 
-  await collection.insertOne(doc);
+  try {
+    await collection.insertOne(doc);
+  } catch (error) {
+    // 处理唯一索引冲突
+    if (error instanceof MongoServerError && error.code === 11000) {
+      throw new Error(`Action with name "${action.name}" already exists for this user`);
+    }
+    throw error;
+  }
+
   return {
     ...doc,
     id: doc._id.toString(),

@@ -52,6 +52,7 @@ export async function initializeIndexes(): Promise<void> {
   await createIndexSafe('actions', { createdBy: 1 });
   await createIndexSafe('actions', { isPublic: 1 });
   await createIndexSafe('actions', { tags: 1 });
+  await createIndexSafe('actions', { createdBy: 1, name: 1 }, { unique: true, partialFilterExpression: { createdBy: { $exists: true } } });
 
   // InvitationRecords indexes
   await createIndexSafe('invitationRecords', { inviterId: 1 });
