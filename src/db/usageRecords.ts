@@ -5,21 +5,37 @@ import { ObjectId } from 'mongodb';
 
 const COLLECTION_NAME = 'usageRecords';
 
+/**
+ * 将 MongoDB 文档转换为 UsageRecord
+ * 确保 timestamp 是数字时间戳
+ */
+function toUsageRecord(doc: any): UsageRecord {
+  const timestamp = doc.timestamp instanceof Date 
+    ? doc.timestamp.getTime() 
+    : (typeof doc.timestamp === 'number' ? doc.timestamp : Date.now());
+  
+  return {
+    ...doc,
+    id: doc._id.toString(),
+    timestamp,
+  } as unknown as UsageRecord;
+}
+
 export async function createUsageRecord(record: Omit<UsageRecord, 'id'> & { _id?: ObjectId }): Promise<UsageRecord> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);
 
+  // 确保 timestamp 是数字
+  const timestamp = record.timestamp || Date.now();
+
   const doc = {
     ...record,
     _id: record._id || new ObjectId(),
-    timestamp: new Date(),
+    timestamp,
   };
 
   await collection.insertOne(doc);
-  return {
-    ...doc,
-    id: doc._id.toString(),
-  } as unknown as UsageRecord;
+  return toUsageRecord(doc);
 }
 
 export async function getUsageRecord(id: string): Promise<UsageRecord | null> {
@@ -29,10 +45,7 @@ export async function getUsageRecord(id: string): Promise<UsageRecord | null> {
   const doc = await collection.findOne({ _id: new ObjectId(id) });
   if (!doc) return null;
 
-  return {
-    ...doc,
-    id: doc._id.toString(),
-  } as unknown as UsageRecord;
+  return toUsageRecord(doc);
 }
 
 export async function getUserUsageRecords(userId: string): Promise<UsageRecord[]> {
@@ -40,10 +53,7 @@ export async function getUserUsageRecords(userId: string): Promise<UsageRecord[]
   const collection = db.collection(COLLECTION_NAME);
 
   const docs = await collection.find({ userId }).toArray();
-  return docs.map(doc => ({
-    ...doc,
-    id: doc._id.toString(),
-  })) as unknown as UsageRecord[];
+  return docs.map(toUsageRecord);
 }
 
 export async function getUsageRecordsByDateRange(
@@ -58,16 +68,13 @@ export async function getUsageRecordsByDateRange(
     .find({
       userId,
       timestamp: {
-        $gte: startDate,
-        $lte: endDate,
+        $gte: startDate.getTime(),
+        $lte: endDate.getTime(),
       },
     })
     .toArray();
 
-  return docs.map(doc => ({
-    ...doc,
-    id: doc._id.toString(),
-  })) as unknown as UsageRecord[];
+  return docs.map(toUsageRecord);
 }
 
 export async function getUsageRecordsByApiKey(apiKeyId: string): Promise<UsageRecord[]> {
@@ -75,10 +82,7 @@ export async function getUsageRecordsByApiKey(apiKeyId: string): Promise<UsageRe
   const collection = db.collection(COLLECTION_NAME);
 
   const docs = await collection.find({ apiKeyId }).toArray();
-  return docs.map(doc => ({
-    ...doc,
-    id: doc._id.toString(),
-  })) as unknown as UsageRecord[];
+  return docs.map(toUsageRecord);
 }
 
 export async function getAllUsageRecords(): Promise<UsageRecord[]> {
@@ -86,10 +90,7 @@ export async function getAllUsageRecords(): Promise<UsageRecord[]> {
   const collection = db.collection(COLLECTION_NAME);
 
   const docs = await collection.find({}).toArray();
-  return docs.map(doc => ({
-    ...doc,
-    id: doc._id.toString(),
-  })) as unknown as UsageRecord[];
+  return docs.map(toUsageRecord);
 }
 
 export async function deleteUsageRecordsByApiKey(apiKeyId: string): Promise<number> {
