@@ -17,6 +17,7 @@ import {
   getAllUsers,
   getActiveNotifications,
   loadNotifications,
+  getUserByUid,
 } from '../storage.js';
 import { hashPassword, verifyPassword } from '../auth.js';
 
@@ -465,6 +466,108 @@ router.get('/notifications', authMiddleware, async (req: AuthRequest, res: Respo
   } catch (error) {
     console.error('[Get Notifications Error]', error);
     res.status(500).json({ error: 'Failed to get notifications' });
+  }
+});
+
+// ==================== UID 系统 ====================
+
+/**
+ * 获取用户 UID
+ */
+router.get('/uid', authMiddleware, (req: AuthRequest, res: Response) => {
+  try {
+    const user = getUserById(req.userId!);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      uid: user.uid || null,
+      username: user.username,
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get UID' });
+  }
+});
+
+/**
+ * 设置用户 UID
+ */
+router.put('/uid', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const { uid } = req.body;
+    const user = getUserById(req.userId!);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // 验证 UID 格式：仅允许字母、数字、下划线
+    if (!uid || typeof uid !== 'string') {
+      return res.status(400).json({ error: 'UID is required and must be a string' });
+    }
+
+    if (!/^[a-zA-Z0-9_]+$/.test(uid)) {
+      return res.status(400).json({ error: 'UID can only contain letters, numbers, and underscores' });
+    }
+
+    if (uid.length < 3 || uid.length > 32) {
+      return res.status(400).json({ error: 'UID must be between 3 and 32 characters' });
+    }
+
+    // 检查 UID 是否已被使用
+    const existingUser = getUserByUid(uid);
+    if (existingUser && existingUser.id !== user.id) {
+      return res.status(409).json({ error: 'UID already taken' });
+    }
+
+    // 如果用户已有 UID，不允许修改
+    if (user.uid && user.uid !== uid) {
+      return res.status(400).json({ error: 'UID cannot be changed once set' });
+    }
+
+    // 更新 UID
+    const updated = await updateUser(req.userId!, { uid });
+
+    res.json({
+      success: true,
+      uid: updated?.uid,
+      message: 'UID set successfully',
+    });
+  } catch (error) {
+    console.error('[Set UID Error]', error);
+    res.status(500).json({ error: 'Failed to set UID' });
+  }
+});
+
+/**
+ * 检查 UID 是否可用
+ */
+router.post('/uid/check', async (req: AuthRequest, res: Response) => {
+  try {
+    const { uid } = req.body;
+
+    if (!uid || typeof uid !== 'string') {
+      return res.status(400).json({ error: 'UID is required' });
+    }
+
+    if (!/^[a-zA-Z0-9_]+$/.test(uid)) {
+      return res.status(400).json({ available: false, reason: 'Invalid format' });
+    }
+
+    if (uid.length < 3 || uid.length > 32) {
+      return res.status(400).json({ available: false, reason: 'Length must be 3-32 characters' });
+    }
+
+    const existingUser = getUserByUid(uid);
+    const available = !existingUser;
+
+    res.json({
+      available,
+      uid,
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to check UID availability' });
   }
 });
 

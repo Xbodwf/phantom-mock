@@ -20,6 +20,7 @@ export async function initializeIndexes(): Promise<void> {
   // Users indexes
   await createIndexSafe('users', { username: 1 }, { unique: true });
   await createIndexSafe('users', { email: 1 }, { unique: true });
+  await createIndexSafe('users', { uid: 1 }, { sparse: true, unique: true });
   await createIndexSafe('users', { inviteCode: 1 }, { sparse: true, unique: true });
   await createIndexSafe('users', { permissionLevel: 1 });
 

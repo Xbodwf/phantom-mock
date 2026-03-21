@@ -20,6 +20,7 @@ import { UserProfilePage } from './pages/UserProfilePage';
 import { UserInvitationPage } from './pages/UserInvitationPage';
 import { ActionsPage } from './pages/ActionsPage';
 import { ActionEditorPage } from './pages/ActionEditorPage';
+import { ActionMarketplace } from './pages/ActionMarketplace';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AdminUserRequestsPage } from './pages/AdminUserRequestsPage';
@@ -262,6 +263,16 @@ function AppContent() {
               element={
                 <ProtectedRoute>
                   <ActionEditorPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/actions/marketplace"
+              element={
+                <ProtectedRoute>
+                  <UserLayout>
+                    <ActionMarketplace />
+                  </UserLayout>
                 </ProtectedRoute>
               }
             />

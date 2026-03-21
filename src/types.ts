@@ -166,34 +166,35 @@ export interface User {
   id: string;                      // UUID
   username: string;                // 唯一用户名
   email: string;                   // 唯一邮箱
+  uid?: string;                    // 用户UID（@username风格，唯一，仅允许字母数字下划线）
   passwordHash: string;            // bcrypt 哈希密码
-  
+
   // 余额和使用
   balance: number;                 // 账户余额（美元）
   totalUsage: number;              // 总 token 使用量
-  
+
   // 权限和角色
   role: 'user' | 'admin';          // 用户角色
   permissionLevel?: number;        // 权限等级（数字越大权限越高，默认普通用户为0，管理员为100）
-  
+
   // 邀请系统相关
   inviteCode?: string;             // 用户的邀请码
   invitedBy?: string;              // 邀请人 ID
   extraInviteQuota?: number;       // 额外购买的邀请次数
-  
+
   // 用户拥有的资源
   ownedModels?: string[];          // 自属模型ID列表
   actions?: string[];              // 用户创建的 Actions
-  
+
   // 实名信息（可选）
   realName?: string;               // 身份证名字
   idCardNumber?: string;           // 身份证ID
-  
+
   // 时间戳
   createdAt: number;               // 创建时间
   lastLoginAt?: number;            // 最后登录时间
   enabled: boolean;                // 账户是否启用
-  
+
   // 用户设置
   settings?: {
     emailNotifications?: boolean;  // 邮件通知

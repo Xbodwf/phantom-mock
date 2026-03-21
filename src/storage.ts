@@ -296,6 +296,10 @@ export function getUserByEmail(email: string): User | undefined {
   return usersCache.find(u => u.email === email);
 }
 
+export function getUserByUid(uid: string): User | undefined {
+  return usersCache.find(u => u.uid === uid);
+}
+
 export async function createUser(user: Omit<User, 'id'>): Promise<User> {
   const newUser = await usersDB.createUser(user);
   usersCache.push(newUser);

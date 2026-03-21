@@ -78,6 +78,16 @@ export async function getUserByInviteCode(inviteCode: string): Promise<User | nu
   return toEntity<User>(doc);
 }
 
+export async function getUserByUid(uid: string): Promise<User | null> {
+  const db = getDB();
+  const collection = db.collection(COLLECTION_NAME);
+
+  const doc = await collection.findOne({ uid });
+  if (!doc) return null;
+
+  return toEntity<User>(doc);
+}
+
 export async function getAllUsers(): Promise<User[]> {
   const db = getDB();
   const collection = db.collection(COLLECTION_NAME);

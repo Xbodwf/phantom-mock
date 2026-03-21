@@ -9,6 +9,7 @@ import {
   updateAction,
   deleteAction,
   incrementActionUsage,
+  getUserById,
 } from '../storage.js';
 import { getSandboxInterfacesDoc } from '../actions/sandboxInterfaces.js';
 import { getActionMetadata, validateActionCode } from '../actions/executor.js';
@@ -179,6 +180,98 @@ router.post('/actions/validate', authMiddleware, async (req: AuthRequest, res: R
       error: 'Failed to validate action code',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
+  }
+});
+
+/**
+ * 发布 Action 到市场
+ * 命名规则：@uid/action_name
+ */
+router.post('/actions/:id/publish', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const action = getActionById(id);
+
+    if (!action) {
+      return res.status(404).json({ error: 'Action not found' });
+    }
+
+    // 检查权限
+    if (action.createdBy !== req.userId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // 获取用户信息
+    const user = getUserById(req.userId!);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // 检查用户是否设置了 UID
+    if (!user.uid) {
+      return res.status(400).json({
+        error: 'UID not set',
+        message: 'Please set your UID before publishing actions',
+      });
+    }
+
+    // 检查是否已发布
+    if (action.isPublic) {
+      return res.status(400).json({ error: 'Action is already published' });
+    }
+
+    // 发布 Action
+    const published = await updateAction(id, {
+      isPublic: true,
+    });
+
+    res.json({
+      success: true,
+      action: published,
+      publishedName: `@${user.uid}/${action.name}`,
+      message: 'Action published successfully',
+    });
+  } catch (error) {
+    console.error('[Publish Action Error]', error);
+    res.status(500).json({ error: 'Failed to publish action' });
+  }
+});
+
+/**
+ * 取消发布 Action
+ */
+router.post('/actions/:id/unpublish', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const action = getActionById(id);
+
+    if (!action) {
+      return res.status(404).json({ error: 'Action not found' });
+    }
+
+    // 检查权限
+    if (action.createdBy !== req.userId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // 检查是否已发布
+    if (!action.isPublic) {
+      return res.status(400).json({ error: 'Action is not published' });
+    }
+
+    // 取消发布
+    const unpublished = await updateAction(id, {
+      isPublic: false,
+    });
+
+    res.json({
+      success: true,
+      action: unpublished,
+      message: 'Action unpublished successfully',
+    });
+  } catch (error) {
+    console.error('[Unpublish Action Error]', error);
+    res.status(500).json({ error: 'Failed to unpublish action' });
   }
 });
 

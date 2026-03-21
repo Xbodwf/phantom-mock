@@ -17,8 +17,13 @@ import {
   Alert,
   IconButton,
   Chip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Snackbar,
 } from '@mui/material';
-import { Plus, Trash2, Edit2 } from 'lucide-react';
+import { Plus, Trash2, Edit2, Upload, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import axios from 'axios';
@@ -31,6 +36,10 @@ export function ActionsPage() {
   const [actions, setActions] = useState<Action[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [selectedActionForPublish, setSelectedActionForPublish] = useState<Action | null>(null);
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
 
   useEffect(() => {
     if (!user || !token) {
@@ -68,6 +77,56 @@ export function ActionsPage() {
       await fetchActions();
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to delete action');
+    }
+  };
+
+  const handlePublishClick = (action: Action) => {
+    setSelectedActionForPublish(action);
+    setPublishDialogOpen(true);
+  };
+
+  const handlePublishConfirm = async () => {
+    if (!selectedActionForPublish) return;
+
+    try {
+      const response = await axios.post(
+        `/api/actions/${selectedActionForPublish.id}/publish`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      setSnackbarMessage(
+        t('actions.publishSuccess', 'Action published as {{name}}', {
+          name: response.data.publishedName,
+        })
+      );
+      setSnackbarOpen(true);
+      setPublishDialogOpen(false);
+      await fetchActions();
+    } catch (err: any) {
+      const errorMsg = err.response?.data?.error || 'Failed to publish action';
+      setSnackbarMessage(errorMsg);
+      setSnackbarOpen(true);
+    }
+  };
+
+  const handleUnpublish = async (id: string) => {
+    if (!confirm(t('actions.confirmUnpublish', 'Unpublish this action?'))) return;
+
+    try {
+      await axios.post(
+        `/api/actions/${id}/unpublish`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      setSnackbarMessage(t('actions.unpublishSuccess', 'Action unpublished'));
+      setSnackbarOpen(true);
+      await fetchActions();
+    } catch (err: any) {
+      const errorMsg = err.response?.data?.error || 'Failed to unpublish action';
+      setSnackbarMessage(errorMsg);
+      setSnackbarOpen(true);
     }
   };
 
@@ -139,13 +198,34 @@ export function ActionsPage() {
                           size="small"
                           color="primary"
                           onClick={() => handleEditAction(action)}
+                          title={t('common.edit')}
                         >
                           <Edit2 size={18} />
                         </IconButton>
+                        {!action.isPublic ? (
+                          <IconButton
+                            size="small"
+                            color="success"
+                            onClick={() => handlePublishClick(action)}
+                            title={t('actions.publish', 'Publish')}
+                          >
+                            <Upload size={18} />
+                          </IconButton>
+                        ) : (
+                          <IconButton
+                            size="small"
+                            color="warning"
+                            onClick={() => handleUnpublish(action.id)}
+                            title={t('actions.unpublish', 'Unpublish')}
+                          >
+                            <X size={18} />
+                          </IconButton>
+                        )}
                         <IconButton
                           size="small"
                           color="error"
                           onClick={() => handleDeleteAction(action.id)}
+                          title={t('common.delete')}
                         >
                           <Trash2 size={18} />
                         </IconButton>
@@ -158,6 +238,45 @@ export function ActionsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* 发布确认对话框 */}
+      <Dialog open={publishDialogOpen} onClose={() => setPublishDialogOpen(false)}>
+        <DialogTitle>{t('actions.publishConfirm', 'Publish Action')}</DialogTitle>
+        <DialogContent sx={{ pt: 2 }}>
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            {t(
+              'actions.publishMessage',
+              'Publishing this action will make it available to all users in the Action Marketplace. The action will be named: @{{uid}}/{{name}}',
+              {
+                uid: user?.uid || 'username',
+                name: selectedActionForPublish?.name || '',
+              }
+            )}
+          </Typography>
+          <Alert severity="info">
+            {t(
+              'actions.publishNote',
+              'Once published, other users can discover and use your action. You can unpublish it anytime.'
+            )}
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPublishDialogOpen(false)}>
+            {t('common.cancel')}
+          </Button>
+          <Button variant="contained" onClick={handlePublishConfirm}>
+            {t('actions.publish', 'Publish')}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Snackbar */}
+      <Snackbar
+        open={snackbarOpen}
+        autoHideDuration={4000}
+        onClose={() => setSnackbarOpen(false)}
+        message={snackbarMessage}
+      />
     </Container>
   );
 }

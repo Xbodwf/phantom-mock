@@ -3,7 +3,7 @@ import type { ChatCompletionRequest, PendingRequest, RerankRequest, RerankRespon
 import { addPendingRequest, removePendingRequest } from '../requestStore.js';
 import { buildResponse, buildStreamChunk, buildStreamDone, generateRequestId } from '../responseBuilder.js';
 import { broadcastRequest, getConnectedClientsCount } from '../websocket.js';
-import { getAllModels, getModel, validateApiKey, getUserById, updateUser, createUsageRecord, getAllActions, getActionByName, getPublicAndUserActions, getAllApiKeys } from '../storage.js';
+import { getAllModels, getModel, validateApiKey, getUserById, updateUser, createUsageRecord, getAllActions, getActionByName, getPublicAndUserActions, getAllApiKeys, getPublicActions } from '../storage.js';
 import { calculateCost, calculateTokens } from '../billing.js';
 import { executeAction } from '../actions/executor.js';
 import { forwardChatRequest, forwardStreamRequest } from '../forwarder.js';
@@ -89,6 +89,31 @@ router.get('/models/:id(*)', (req: Request, res: Response) => {
     });
   }
   res.json(model);
+});
+
+/**
+ * GET /v1/actions/models - 获取 Actions 列表（用户私有 + 所有公开）
+ */
+router.get('/actions/models', (req: Request, res: Response) => {
+  // 获取用户ID（支持 JWT 和 API Key）
+  let userId = (req as any).user?.id;
+
+  // 如果没有 JWT，尝试从 API Key 获取
+  if (!userId) {
+    const apiKeyStr = extractApiKey(req);
+    if (apiKeyStr) {
+      const allApiKeys = getAllApiKeys();
+      const apiKeyObj = allApiKeys.find(k => k.key === apiKeyStr && k.enabled);
+      if (apiKeyObj) {
+        userId = apiKeyObj.userId;
+      }
+    }
+  }
+
+  // 获取用户的私有 actions + 所有公开 actions
+  const userActions = userId ? getPublicAndUserActions(userId) : getPublicActions();
+
+  res.json(userActions);
 });
 
 /**

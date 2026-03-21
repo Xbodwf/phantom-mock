@@ -13,6 +13,7 @@
     "start": "node dist/index.js",
     "lint": "eslint src/frontend",
     "migrate": "tsx src/scripts/migrate.ts",
+    "migrate:uids": "tsx src/scripts/migrate-user-uids.ts",
     "seed:admin": "tsx src/scripts/seed-admin.ts"
   },
   "keywords": [
