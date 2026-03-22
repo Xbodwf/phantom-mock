@@ -1342,6 +1342,7 @@ function parseGeminiModelPath(path: string): { modelId: string; action: string }
 app.post('/v1beta/models/*', async (req: Request, res: Response) => {
   const rawPath = req.originalUrl.split('?')[0]; // 移除查询参数
   const path = decodeURIComponent(rawPath); // 解码 URL 编码（如 %3A -> :）
+  console.log('[Gemini POST] rawPath:', rawPath, 'decoded:', path);
   const parsed = parseGeminiModelPath(path);
 
   if (!parsed) {
@@ -1405,6 +1406,7 @@ app.get('/v1beta/models', (req: Request, res: Response) => {
 // GET /v1beta/models/:modelId(*) - Gemini model info (支持模型ID包含斜杠)
 app.get('/v1beta/models/:modelId(*)', (req: Request, res: Response) => {
   const modelId = decodeURIComponent(req.params.modelId as string);
+  console.log('[Gemini GET] modelId from params:', modelId, 'originalUrl:', req.originalUrl);
   const model = getModel(modelId);
 
   if (!model) {
