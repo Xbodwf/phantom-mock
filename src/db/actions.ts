@@ -14,6 +14,7 @@ function docToAction(doc: any): Action {
   return {
     ...rest,
     id: doc.id || _id.toString(),
+    _id: _id.toString(),
   } as unknown as Action;
 }
 

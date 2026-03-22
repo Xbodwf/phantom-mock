@@ -94,8 +94,8 @@ export function UserProfilePage() {
   };
 
   const handleCopyUid = () => {
-    if (uid) {
-      copyToClipboard(`@${uid}`);
+    if (user?.uid) {
+      copyToClipboard(`@${user.uid}`);
       setCopiedUid(true);
       setTimeout(() => setCopiedUid(false), 2000);
     }
@@ -205,7 +205,7 @@ export function UserProfilePage() {
             {t('user.uidDescription')}
           </Typography>
 
-          {uid ? (
+          {user?.uid ? (
             <Stack spacing={2}>
               <Box
                 sx={{
@@ -225,7 +225,7 @@ export function UserProfilePage() {
                     flex: 1,
                   }}
                 >
-                  @{uid}
+                  @{user.uid}
                 </Typography>
                 <Button
                   size="small"
@@ -237,7 +237,7 @@ export function UserProfilePage() {
                 </Button>
               </Box>
               <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                {t('user.uidImmutable')}
+                {t('user.uidChangeCooldown', 'UID can be changed every 30 days')}
               </Typography>
             </Stack>
           ) : (

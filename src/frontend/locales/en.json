@@ -120,6 +120,7 @@
     "subtitle": "Discover and select from {{count}} available models",
     "searchPlaceholder": "Search models by name, description, or provider...",
     "category": "Category",
+    "type": "Model Type",
     "provider": "Provider",
     "priceRange": "Price Range",
     "allCategories": "All Categories",

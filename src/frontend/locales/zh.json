@@ -119,6 +119,7 @@
     "subtitle": "从 {{count}} 个可用模型中发现和选择",
     "searchPlaceholder": "按名称、描述或提供商搜索模型...",
     "category": "分类",
+    "type": "模型类型",
     "provider": "提供商",
     "priceRange": "价格范围",
     "allCategories": "所有分类",

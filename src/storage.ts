@@ -435,7 +435,15 @@ export function getAllActions(): Action[] {
 }
 
 export function getActionById(id: string): Action | undefined {
-  return actionsCache.find(a => a.id === id);
+  // 支持三种格式：
+  // 1. ObjectId (24 字符十六进制)
+  // 2. @uid/name 格式
+  // 3. 原始 id 字段
+  return actionsCache.find(a =>
+    a._id === id ||           // ObjectId
+    a.id === id ||            // @uid/name 或其他 id
+    a.name === id             // 名称
+  );
 }
 
 export function getActionByName(name: string): Action | undefined {
@@ -472,7 +480,7 @@ export async function createAction(action: Omit<Action, 'id' | 'createdAt' | 'up
     createdAt: now,
     updatedAt: now,
     version: 1,
-  });
+  } as any);
 
   actionsCache.push(newAction);
   return newAction;
@@ -484,7 +492,7 @@ export async function updateAction(id: string, updates: Partial<Action>): Promis
     updatedAt: Date.now(),
   });
   if (updated) {
-    const index = actionsCache.findIndex(a => a.id === id);
+    const index = actionsCache.findIndex(a => a._id === id || a.id === id || a.name === id);
     if (index !== -1) {
       actionsCache[index] = updated;
     }
@@ -495,7 +503,7 @@ export async function updateAction(id: string, updates: Partial<Action>): Promis
 export async function deleteAction(id: string): Promise<boolean> {
   const deleted = await actionsDB.deleteAction(id);
   if (deleted) {
-    actionsCache = actionsCache.filter(a => a.id !== id);
+    actionsCache = actionsCache.filter(a => a._id !== id && a.id !== id && a.name !== id);
   }
   return deleted;
 }

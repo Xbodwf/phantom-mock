@@ -168,6 +168,7 @@ export interface User {
   username: string;                // 唯一用户名
   email: string;                   // 唯一邮箱
   uid?: string;                    // 用户UID（@username风格，唯一，仅允许字母数字下划线）
+  uidSetAt?: number;               // UID 设置时间（用于30天修改限制）
   passwordHash: string;            // bcrypt 哈希密码
 
   // 余额和使用
@@ -281,6 +282,7 @@ export interface Invoice {
 // Action 定义（自定义 Action）
 export interface Action {
   id: string;
+  _id?: string;                   // MongoDB ObjectId（用于编辑）
   name: string;
   description: string;
   code: string;                   // TypeScript 代码

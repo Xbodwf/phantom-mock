@@ -288,131 +288,152 @@ export function AdminModelsPage() {
         </DialogTitle>
         <DialogContent sx={{ maxHeight: '80vh', overflowY: 'auto' }}>
           <Stack spacing={2} sx={{ mt: 2 }}>
-            <TextField
-              fullWidth
-              size="small"
-              label="Model ID"
-              value={formData.id}
-              onChange={(e) => setFormData({ ...formData, id: e.target.value })}
-              disabled={showEditDialog}
-              placeholder="gpt-4, claude-3-opus, etc."
-            />
-            <TextField
-              fullWidth
-              size="small"
-              label="Description"
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              multiline
-              rows={2}
-            />
-            <TextField
-              fullWidth
-              size="small"
-              label="Provider"
-              value={formData.owned_by}
-              onChange={(e) => setFormData({ ...formData, owned_by: e.target.value })}
-              placeholder="OpenAI, Anthropic, etc."
-            />
-            <TextField
-              fullWidth
-              size="small"
-              label="Icon URL"
-              value={formData.icon}
-              onChange={(e) => setFormData({ ...formData, icon: e.target.value })}
-              placeholder="/static/models/icon.png"
-            />
-            <FormControl fullWidth size="small">
-              <InputLabel id="model-type-label">{t('models.category')}</InputLabel>
-              <Select
-                labelId="model-type-label"
-                id="model-type-select"
-                value={formData.type || 'text'}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
-                label={t('models.category')}
-              >
-                <MenuItem value="text">Text</MenuItem>
-                <MenuItem value="image">Image</MenuItem>
-                <MenuItem value="video">Video</MenuItem>
-                <MenuItem value="tts">TTS</MenuItem>
-                <MenuItem value="stt">STT</MenuItem>
-                <MenuItem value="embedding">Embedding</MenuItem>
-                <MenuItem value="rerank">Rerank</MenuItem>
-                <MenuItem value="responses">Responses</MenuItem>
-              </Select>
-            </FormControl>
-
-            <Typography variant="subtitle2" sx={{ fontWeight: 600, mt: 2 }}>
-              Pricing
-            </Typography>
-
-            <FormControl fullWidth size="small">
-              <InputLabel id="pricing-type-label">Pricing Type</InputLabel>
-              <Select
-                labelId="pricing-type-label"
-                id="pricing-type-select"
-                value={pricing.type}
-                onChange={(e) =>
-                  setPricing({ ...pricing, type: e.target.value as any })
-                }
-                label="Pricing Type"
-              >
-                <MenuItem value="token">Token-based</MenuItem>
-                <MenuItem value="request">Per-request</MenuItem>
-              </Select>
-            </FormControl>
-
-            {pricing.type === 'token' ? (
-              <>
+            {/* 基本信息 */}
+            <Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                {t('models.manager.basicInfo')}
+              </Typography>
+              <Stack spacing={2}>
                 <TextField
                   fullWidth
-                  type="number"
-                  label="Input Price"
-                  value={pricing.input}
-                  onChange={(e) =>
-                    setPricing({ ...pricing, input: parseFloat(e.target.value) || 0 })
-                  }
-                  inputProps={{ step: '0.0001' }}
                   size="small"
+                  label={t('models.manager.modelId')}
+                  value={formData.id}
+                  onChange={(e) => setFormData({ ...formData, id: e.target.value })}
+                  disabled={showEditDialog}
+                  placeholder="gpt-4, claude-3-opus, etc."
                 />
                 <TextField
                   fullWidth
-                  type="number"
-                  label="Output Price"
-                  value={pricing.output}
-                  onChange={(e) =>
-                    setPricing({ ...pricing, output: parseFloat(e.target.value) || 0 })
-                  }
-                  inputProps={{ step: '0.0001' }}
                   size="small"
+                  label={t('common.description')}
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  multiline
+                  rows={2}
                 />
+                <TextField
+                  fullWidth
+                  size="small"
+                  label={t('models.provider')}
+                  value={formData.owned_by}
+                  onChange={(e) => setFormData({ ...formData, owned_by: e.target.value })}
+                  placeholder="OpenAI, Anthropic, etc."
+                />
+              </Stack>
+            </Box>
+
+            {/* 模型配置 */}
+            <Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                {t('models.manager.advancedSettings')}
+              </Typography>
+              <Stack spacing={2}>
                 <FormControl fullWidth size="small">
-                  <InputLabel>Unit</InputLabel>
+                  <InputLabel id="model-type-label">{t('models.type')}</InputLabel>
                   <Select
-                    value={pricing.unit}
-                    onChange={(e) =>
-                      setPricing({ ...pricing, unit: e.target.value as any })
-                    }
-                    label="Unit"
+                    labelId="model-type-label"
+                    id="model-type-select"
+                    value={formData.type || 'text'}
+                    onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
+                    label={t('models.type')}
                   >
-                    <MenuItem value="K">1K tokens</MenuItem>
-                    <MenuItem value="M">1M tokens</MenuItem>
+                    <MenuItem value="text">Text</MenuItem>
+                    <MenuItem value="image">Image</MenuItem>
+                    <MenuItem value="video">Video</MenuItem>
+                    <MenuItem value="tts">TTS</MenuItem>
+                    <MenuItem value="stt">STT</MenuItem>
+                    <MenuItem value="embedding">Embedding</MenuItem>
+                    <MenuItem value="rerank">Rerank</MenuItem>
+                    <MenuItem value="responses">Responses</MenuItem>
                   </Select>
                 </FormControl>
-              </>
-            ) : (
-              <TextField
-                fullWidth
-                type="number"
-                label="Price per Request"
-                value={pricing.perRequest}
-                onChange={(e) =>
-                  setPricing({ ...pricing, perRequest: parseFloat(e.target.value) || 0 })
-                }
-                inputProps={{ step: '0.0001' }}
-                size="small"
-              />
-            )}
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Icon URL"
+                  value={formData.icon}
+                  onChange={(e) => setFormData({ ...formData, icon: e.target.value })}
+                  placeholder="/static/models/icon.png"
+                />
+              </Stack>
+            </Box>
+
+            {/* 定价 */}
+            <Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                {t('models.details.pricing')}
+              </Typography>
+              <Stack spacing={2}>
+                <FormControl fullWidth size="small">
+                  <InputLabel id="pricing-type-label">Pricing Type</InputLabel>
+                  <Select
+                    labelId="pricing-type-label"
+                    id="pricing-type-select"
+                    value={pricing.type}
+                    onChange={(e) =>
+                      setPricing({ ...pricing, type: e.target.value as any })
+                    }
+                    label="Pricing Type"
+                  >
+                    <MenuItem value="token">Token-based</MenuItem>
+                    <MenuItem value="request">Per-request</MenuItem>
+                  </Select>
+                </FormControl>
+
+                {pricing.type === 'token' ? (
+                  <>
+                    <TextField
+                      fullWidth
+                      type="number"
+                      label="Input Price"
+                      value={pricing.input}
+                      onChange={(e) =>
+                        setPricing({ ...pricing, input: parseFloat(e.target.value) || 0 })
+                      }
+                      inputProps={{ step: '0.0001' }}
+                      size="small"
+                    />
+                    <TextField
+                      fullWidth
+                      type="number"
+                      label="Output Price"
+                      value={pricing.output}
+                      onChange={(e) =>
+                        setPricing({ ...pricing, output: parseFloat(e.target.value) || 0 })
+                      }
+                      inputProps={{ step: '0.0001' }}
+                      size="small"
+                    />
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Unit</InputLabel>
+                      <Select
+                        value={pricing.unit}
+                        onChange={(e) =>
+                          setPricing({ ...pricing, unit: e.target.value as any })
+                        }
+                        label="Unit"
+                      >
+                        <MenuItem value="K">1K tokens</MenuItem>
+                        <MenuItem value="M">1M tokens</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </>
+                ) : (
+                  <TextField
+                    fullWidth
+                    type="number"
+                    label="Price per Request"
+                    value={pricing.perRequest}
+                    onChange={(e) =>
+                      setPricing({ ...pricing, perRequest: parseFloat(e.target.value) || 0 })
+                    }
+                    inputProps={{ step: '0.0001' }}
+                    size="small"
+                  />
+                )}
+              </Stack>
+            </Box>
           </Stack>
         </DialogContent>
         <DialogActions>

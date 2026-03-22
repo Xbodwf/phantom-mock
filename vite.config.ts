@@ -25,6 +25,23 @@ export default defineConfig({
   build: {
     outDir: 'dist/frontend',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // 第三方库
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-mui': ['@mui/material', '@mui/icons-material'],
+          'vendor-utils': ['axios', 'i18next', 'react-i18next'],
+
+          // 页面组件
+          'page-auth': ['./src/frontend/pages/LoginPage.tsx', './src/frontend/pages/RegisterPage.tsx'],
+          'page-user': ['./src/frontend/pages/UserDashboard.tsx', './src/frontend/pages/UserApiKeysPage.tsx', './src/frontend/pages/UserProfilePage.tsx'],
+          'page-admin': ['./src/frontend/pages/AdminDashboard.tsx', './src/frontend/pages/AdminUsersPage.tsx', './src/frontend/pages/AdminModelsPage.tsx'],
+          'page-marketplace': ['./src/frontend/pages/ModelMarketplace.tsx', './src/frontend/pages/ActionMarketplace.tsx'],
+          'page-actions': ['./src/frontend/pages/ActionsPage.tsx', './src/frontend/pages/ActionEditorPage.tsx'],
+        },
+      },
+    },
   },
   resolve: {
     alias: {

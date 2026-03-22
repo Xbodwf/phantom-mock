@@ -492,6 +492,7 @@ router.get('/uid', authMiddleware, (req: AuthRequest, res: Response) => {
 
 /**
  * 设置用户 UID
+ * 允许每 30 天修改一次
  */
 router.put('/uid', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
@@ -521,18 +522,40 @@ router.put('/uid', authMiddleware, async (req: AuthRequest, res: Response) => {
       return res.status(409).json({ error: 'UID already taken' });
     }
 
-    // 如果用户已有 UID，不允许修改
-    if (user.uid && user.uid !== uid) {
-      return res.status(400).json({ error: 'UID cannot be changed once set' });
+    // 如果 UID 没有变化，直接返回成功
+    if (user.uid === uid) {
+      return res.json({
+        success: true,
+        uid: user.uid,
+        message: 'UID unchanged',
+      });
     }
 
-    // 更新 UID
-    const updated = await updateUser(req.userId!, { uid });
+    // 检查 30 天修改限制
+    const COOLDOWN_DAYS = 30;
+    const COOLDOWN_MS = COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+
+    if (user.uid && user.uidSetAt) {
+      const timeSinceLastSet = Date.now() - user.uidSetAt;
+      if (timeSinceLastSet < COOLDOWN_MS) {
+        const daysRemaining = Math.ceil((COOLDOWN_MS - timeSinceLastSet) / (24 * 60 * 60 * 1000));
+        return res.status(400).json({
+          error: `UID can only be changed every ${COOLDOWN_DAYS} days. Please wait ${daysRemaining} more day(s).`,
+          daysRemaining,
+          nextChangeAt: user.uidSetAt + COOLDOWN_MS,
+        });
+      }
+    }
+
+    // 更新 UID 和设置时间
+    const updated = await updateUser(req.userId!, { uid, uidSetAt: Date.now() });
 
     res.json({
       success: true,
       uid: updated?.uid,
-      message: 'UID set successfully',
+      uidSetAt: updated?.uidSetAt,
+      message: user.uid ? 'UID updated successfully' : 'UID set successfully',
+      nextChangeAt: Date.now() + COOLDOWN_MS,
     });
   } catch (error) {
     console.error('[Set UID Error]', error);

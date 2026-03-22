@@ -64,7 +64,7 @@ export function ActionsPage() {
   };
 
   const handleEditAction = (action: Action) => {
-    navigate(`/actions/edit/${action.id}`);
+    navigate(`/actions/edit/${action._id || action.id}`);
   };
 
   const handleDeleteAction = async (id: string) => {

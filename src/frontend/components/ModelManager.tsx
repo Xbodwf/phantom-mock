@@ -85,6 +85,7 @@ interface FormData {
   id: string;
   owned_by: string;
   description: string;
+  type: 'text' | 'image' | 'video' | 'tts' | 'stt' | 'embedding' | 'rerank' | 'responses';
   context_length: number;
   aliases: string;
   max_output_tokens: number;
@@ -112,6 +113,7 @@ const defaultFormData: FormData = {
   id: '',
   owned_by: 'google',
   description: '',
+  type: 'text',
   context_length: 1048576,
   aliases: '',
   max_output_tokens: 8192,
@@ -221,6 +223,7 @@ export default function ModelManager() {
         id: model.id,
         owned_by: model.owned_by,
         description: model.description || '',
+        type: model.type || 'text',
         context_length: model.context_length || 1048576,
         aliases: model.aliases?.join(', ') || '',
         max_output_tokens: model.max_output_tokens || 8192,
@@ -262,6 +265,7 @@ export default function ModelManager() {
       id: formData.id,
       owned_by: formData.owned_by,
       description: formData.description,
+      type: formData.type,
       context_length: formData.context_length,
       aliases: formData.aliases ? formData.aliases.split(',').map(s => s.trim()).filter(Boolean) : undefined,
       max_output_tokens: formData.max_output_tokens,
@@ -466,7 +470,28 @@ export default function ModelManager() {
                   helperText={t('models.manager.aliasesHelper')}
                   size="small"
                 />
-                
+
+                {/* 模型类型 */}
+                <FormControl fullWidth size="small">
+                  <InputLabel id="model-type-label">{t('models.type')}</InputLabel>
+                  <Select
+                    labelId="model-type-label"
+                    id="model-type-select"
+                    value={formData.type}
+                    onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
+                    label={t('models.type')}
+                  >
+                    <MenuItem value="text">Text</MenuItem>
+                    <MenuItem value="image">Image</MenuItem>
+                    <MenuItem value="video">Video</MenuItem>
+                    <MenuItem value="tts">TTS</MenuItem>
+                    <MenuItem value="stt">STT</MenuItem>
+                    <MenuItem value="embedding">Embedding</MenuItem>
+                    <MenuItem value="rerank">Rerank</MenuItem>
+                    <MenuItem value="responses">Responses</MenuItem>
+                  </Select>
+                </FormControl>
+
                 {/* 图标选择 */}
                 <Box>
                   <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
