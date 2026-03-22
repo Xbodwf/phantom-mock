@@ -321,139 +321,204 @@ export function ActionMarketplace({ onSelectAction }: ActionMarketplaceProps) {
 
         <Tabs value={detailsTab} onChange={(_, newValue) => setDetailsTab(newValue)} sx={{ borderBottom: 1, borderColor: 'divider', px: 3 }}>
           <Tab label={t('actionMarketplace.overview', 'Overview')} />
-          <Tab label={t('actionMarketplace.parameters', 'Parameters')} />
+          <Tab label={t('actionMarketplace.inspector', 'Inspector')} />
           <Tab label={t('actionMarketplace.code', 'Code')} />
         </Tabs>
 
         <DialogContent sx={{ pt: 2 }}>
           {/* 概览标签页 */}
-          {detailsTab === 0 && (
-            <Stack spacing={2}>
-              <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
-                  {t('actionMarketplace.description', 'Description')}
-                </Typography>
-                <Typography variant="body2">{selectedAction?.description}</Typography>
-              </Box>
+          {detailsTab === 0 && (() => {
+            const metadata = selectedAction?.code ? extractMetadataFromCode(selectedAction.code) : null;
+            return (
+              <Stack spacing={2}>
+                {/* Metadata 信息 */}
+                {metadata && (
+                  <>
+                    {metadata.name && (
+                      <Box>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                          {t('actionMarketplace.name', 'Name')}
+                        </Typography>
+                        <Typography variant="body2">{metadata.name}</Typography>
+                      </Box>
+                    )}
 
-              {selectedAction?.tags && selectedAction.tags.length > 0 && (
+                    <Box>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                        {t('actionMarketplace.description', 'Description')}
+                      </Typography>
+                      <Typography variant="body2">{metadata?.description || selectedAction?.description}</Typography>
+                    </Box>
+
+                    {metadata.version && (
+                      <Box>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                          {t('actionMarketplace.version', 'Version')}
+                        </Typography>
+                        <Typography variant="body2">{metadata.version}</Typography>
+                      </Box>
+                    )}
+
+                    {metadata.author && (
+                      <Box>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                          {t('actionMarketplace.author', 'Author')}
+                        </Typography>
+                        <Typography variant="body2">{metadata.author}</Typography>
+                      </Box>
+                    )}
+                  </>
+                )}
+
+                {!metadata && selectedAction?.description && (
+                  <Box>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                      {t('actionMarketplace.description', 'Description')}
+                    </Typography>
+                    <Typography variant="body2">{selectedAction.description}</Typography>
+                  </Box>
+                )}
+
+                {(selectedAction?.tags || metadata?.tags) && (selectedAction?.tags?.length || metadata?.tags?.length) > 0 && (
+                  <Box>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                      {t('actionMarketplace.tags', 'Tags')}
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                      {(selectedAction?.tags || metadata?.tags || []).map((tag: string) => (
+                        <Chip key={tag} label={tag} size="small" />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+
                 <Box>
                   <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
-                    {t('actionMarketplace.tags', 'Tags')}
+                    {t('actionMarketplace.actionId', 'Action ID')}
                   </Typography>
-                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                    {selectedAction.tags.map((tag) => (
-                      <Chip key={tag} label={tag} size="small" />
-                    ))}
-                  </Box>
-                </Box>
-              )}
-
-              <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
-                  {t('actionMarketplace.actionId', 'Action ID')}
-                </Typography>
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1,
-                    p: 1.5,
-                    bgcolor: 'action.hover',
-                    borderRadius: 1,
-                    fontFamily: 'monospace',
-                    fontSize: '0.875rem',
-                  }}
-                >
-                  <Typography
-                    variant="body2"
+                  <Box
                     sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1,
+                      p: 1.5,
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
                       fontFamily: 'monospace',
-                      flex: 1,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
+                      fontSize: '0.875rem',
                     }}
                   >
-                    {selectedAction?.id}
-                  </Typography>
-                  <Button
-                    size="small"
-                    onClick={() => selectedAction && handleCopyId(selectedAction.id)}
-                    startIcon={copiedId === selectedAction?.id ? <Check size={16} /> : <Copy size={16} />}
-                    sx={{ minWidth: 'auto' }}
-                  >
-                    {copiedId === selectedAction?.id ? 'Copied' : 'Copy'}
-                  </Button>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontFamily: 'monospace',
+                        flex: 1,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {selectedAction?.id}
+                    </Typography>
+                    <Button
+                      size="small"
+                      onClick={() => selectedAction && handleCopyId(selectedAction.id)}
+                      startIcon={copiedId === selectedAction?.id ? <Check size={16} /> : <Copy size={16} />}
+                      sx={{ minWidth: 'auto' }}
+                    >
+                      {copiedId === selectedAction?.id ? 'Copied' : 'Copy'}
+                    </Button>
+                  </Box>
                 </Box>
-              </Box>
 
-              {selectedAction?.usageCount !== undefined && (
-                <Box>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
-                    {t('actionMarketplace.stats', 'Statistics')}
-                  </Typography>
-                  <Typography variant="body2">
-                    {t('actionMarketplace.usageCount', 'Used {{count}} times', {
-                      count: selectedAction.usageCount,
-                    })}
-                  </Typography>
-                </Box>
-              )}
-            </Stack>
-          )}
+                {selectedAction?.usageCount !== undefined && (
+                  <Box>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                      {t('actionMarketplace.stats', 'Statistics')}
+                    </Typography>
+                    <Typography variant="body2">
+                      {t('actionMarketplace.usageCount', 'Used {{count}} times', {
+                        count: selectedAction.usageCount,
+                      })}
+                    </Typography>
+                  </Box>
+                )}
+              </Stack>
+            );
+          })()}
 
           {/* 参数标签页 */}
-          {detailsTab === 1 && (
-            <Stack spacing={2}>
-              {selectedAction && (selectedAction.parameters?.length || extractParametersFromCode(selectedAction.code).length) > 0 ? (
-                <Box>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                    {t('actionMarketplace.parameters', 'Parameters')}
-                  </Typography>
-                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)' }, gap: 2 }}>
-                    {(selectedAction.parameters || extractParametersFromCode(selectedAction.code)).map((param, idx) => (
-                      <Box
-                        key={idx}
-                        sx={{
-                          border: '1px solid',
-                          borderColor: 'divider',
-                          borderRadius: 1,
-                          p: 2,
-                          bgcolor: 'background.paper',
-                        }}
-                      >
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 1 }}>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                            {param.name}
-                          </Typography>
-                          <Chip
-                            label={param.type}
-                            size="small"
-                            variant="outlined"
-                          />
-                        </Box>
-                        {param.description && (
-                          <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 1 }}>
-                            {param.description}
-                          </Typography>
-                        )}
+          {detailsTab === 1 && (() => {
+            const metadata = selectedAction?.code ? extractMetadataFromCode(selectedAction.code) : null;
+            const config = metadata?.config;
+            const inputs = metadata?.inputs;
+            const outputs = metadata?.outputs;
+            const hasConfig = config && Object.keys(config).length > 0;
+            const hasInputs = inputs && Object.keys(inputs).length > 0;
+            const hasOutputs = outputs && Object.keys(outputs).length > 0;
+
+            const renderFieldList = (fields: Record<string, any>, title: string) => (
+              <Box>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                  {title}
+                </Typography>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)' }, gap: 2 }}>
+                  {Object.entries(fields).map(([name, field]: [string, any]) => (
+                    <Box
+                      key={name}
+                      sx={{
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 1,
+                        p: 2,
+                        bgcolor: 'background.paper',
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 1 }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                          {name}
+                        </Typography>
                         <Chip
-                          label={param.required ? 'Required' : 'Optional'}
+                          label={field.type || 'any'}
                           size="small"
-                          color={param.required ? 'error' : 'default'}
                           variant="outlined"
                         />
                       </Box>
-                    ))}
-                  </Box>
+                      {field.description && (
+                        <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 1 }}>
+                          {field.description}
+                        </Typography>
+                      )}
+                      <Chip
+                        label={field.required ? 'Required' : 'Optional'}
+                        size="small"
+                        color={field.required ? 'error' : 'default'}
+                        variant="outlined"
+                      />
+                    </Box>
+                  ))}
                 </Box>
-              ) : (
-                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                  {t('actionMarketplace.noParameters', 'No parameters required')}
-                </Typography>
-              )}
-            </Stack>
-          )}
+              </Box>
+            );
+
+            return (
+              <Stack spacing={3}>
+                {/* Config - 检查器配置 */}
+                {hasConfig && renderFieldList(config, t('actionMarketplace.config', 'Config (Inspector Settings)'))}
+
+                {/* Inputs - 输入格式 */}
+                {hasInputs && renderFieldList(inputs, t('actionMarketplace.inputs', 'Inputs (Input Format)'))}
+
+                {/* Outputs - 输出格式 */}
+                {hasOutputs && renderFieldList(outputs, t('actionMarketplace.outputs', 'Outputs (Output Format)'))}
+
+                {!hasConfig && !hasInputs && !hasOutputs && (
+                  <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                    {t('actionMarketplace.noMetadata', 'No config, inputs, or outputs defined in metadata')}
+                  </Typography>
+                )}
+              </Stack>
+            );
+          })()}
 
           {/* 代码标签页 */}
           {detailsTab === 2 && (
