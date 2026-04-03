@@ -351,24 +351,85 @@ export function AdminNavBar() {
   }
 
   return (
-    <Box
-      sx={{
-        width: sidebarCollapsed ? COLLAPSED_WIDTH : DRAWER_WIDTH,
-        height: '100vh',
-        position: 'fixed',
-        left: 0,
-        top: 0,
-        backgroundColor: 'background.paper',
-        borderRadius: 0,
-        
-        border: '1px solid',
-        borderColor: 'divider',
-        zIndex: (theme) => theme.zIndex.drawer,
-        transition: 'width 0.3s ease',
-        overflow: 'auto',
-      }}
-    >
-      {drawerContent}
-    </Box>
+    <>
+      {/* 桌面端顶部栏 - 折叠时显示 */}
+      {sidebarCollapsed && (
+        <Box
+          sx={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: (theme) => theme.zIndex.appBar,
+            backgroundColor: 'background.paper',
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+            px: 2,
+            py: 1,
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        >
+          <IconButton
+            onClick={toggleSidebarCollapsed}
+            color="inherit"
+            sx={{ mr: 1 }}
+          >
+            <MenuIcon size={24} />
+          </IconButton>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <LanguageSwitcher />
+            <ThemeSwitcher />
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer', ml: 'auto' }} onClick={handleUserMenuOpen}>
+              <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.main' }}>
+                {user?.username?.charAt(0)?.toUpperCase() || 'U'}
+              </Avatar>
+              <ChevronDown size={14} style={{ color: 'currentColor' }} />
+            </Box>
+          </Stack>
+          <Menu
+            anchorEl={userMenuAnchor}
+            open={Boolean(userMenuAnchor)}
+            onClose={handleUserMenuClose}
+            anchorOrigin={{
+              vertical: 'bottom',
+              horizontal: 'right',
+            }}
+            transformOrigin={{
+              vertical: 'top',
+              horizontal: 'right',
+            }}
+          >
+            <MenuItem onClick={() => { navigate('/dashboard'); handleUserMenuClose(); }}>
+              <Home size={18} style={{ marginRight: 12 }} />
+              {t('userNav.dashboard')}
+            </MenuItem>
+            <Divider />
+            <MenuItem onClick={() => { handleLogout(); handleUserMenuClose(); }} sx={{ color: 'error.main' }}>
+              <LogOut size={18} style={{ marginRight: 12 }} />
+              {t('common.logout')}
+            </MenuItem>
+          </Menu>
+        </Box>
+      )}
+
+      {/* 桌面端侧边栏 - 展开时显示 */}
+      {!sidebarCollapsed && (
+        <Box
+          sx={{
+            width: DRAWER_WIDTH,
+            height: '100vh',
+            position: 'fixed',
+            left: 0,
+            top: 0,
+            backgroundColor: 'background.paper',
+            borderRight: '1px solid',
+            borderColor: 'divider',
+            zIndex: (theme) => theme.zIndex.drawer,
+          }}
+        >
+          {drawerContent}
+        </Box>
+      )}
+    </>
   );
-}

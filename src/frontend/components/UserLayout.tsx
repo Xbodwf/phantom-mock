@@ -248,24 +248,86 @@ export function UserLayout({ children }: UserLayoutProps) {
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh', maxWidth: '100vw', overflow: 'hidden' }}>
-      {/* 桌面端悬浮侧边栏 */}
-      {!isMobile && (
+      {/* 桌面端顶部栏 - 折叠时显示 */}
+      {!isMobile && sidebarCollapsed && (
         <Box
           sx={{
-            width: sidebarCollapsed ? COLLAPSED_WIDTH : DRAWER_WIDTH,
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: (theme) => theme.zIndex.appBar,
+            backgroundColor: 'background.paper',
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+            px: 2,
+            py: 1,
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        >
+          <IconButton
+            onClick={toggleSidebarCollapsed}
+            color="inherit"
+            sx={{ mr: 1 }}
+          >
+            <MenuIcon size={24} />
+          </IconButton>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, ml: 'auto' }}>
+            <LanguageSwitcher />
+            <ThemeSwitcher />
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer' }} onClick={handleUserMenuOpen}>
+              <Avatar sx={{ width: 36, height: 36, bgcolor: 'primary.main' }}>
+                {user?.username?.charAt(0)?.toUpperCase() || 'U'}
+              </Avatar>
+              <ChevronDown size={16} style={{ color: 'currentColor' }} />
+            </Box>
+          </Box>
+          <Menu
+            anchorEl={userMenuAnchor}
+            open={Boolean(userMenuAnchor)}
+            onClose={handleUserMenuClose}
+            anchorOrigin={{
+              vertical: 'bottom',
+              horizontal: 'right',
+            }}
+            transformOrigin={{
+              vertical: 'top',
+              horizontal: 'right',
+            }}
+          >
+            <MenuItem onClick={() => { handleNavigate('/profile'); handleUserMenuClose(); }}>
+              <User size={18} style={{ marginRight: 12 }} />
+              {t('userNav.profile')}
+            </MenuItem>
+            {isAdmin && (
+              <MenuItem onClick={() => { handleNavigate('/console/dashboard'); handleUserMenuClose(); }}>
+                <SettingsIcon size={18} style={{ marginRight: 12 }} />
+                {t('userNav.adminConsole')}
+              </MenuItem>
+            )}
+            <Divider />
+            <MenuItem onClick={() => { handleLogout(); handleUserMenuClose(); }} sx={{ color: 'error.main' }}>
+              <LogOut size={18} style={{ marginRight: 12 }} />
+              {t('common.logout')}
+            </MenuItem>
+          </Menu>
+        </Box>
+      )}
+
+      {/* 桌面端侧边栏 - 展开时显示 */}
+      {!isMobile && !sidebarCollapsed && (
+        <Box
+          sx={{
+            width: DRAWER_WIDTH,
             height: '100vh',
-            maxHeight: '90vh',
             position: 'fixed',
             left: 0,
             top: 0,
             backgroundColor: 'background.paper',
-            borderRadius: 0,
-            
-            border: '1px solid',
+            borderRight: '1px solid',
             borderColor: 'divider',
             zIndex: (theme) => theme.zIndex.drawer,
-            transition: 'width 0.3s ease',
-            overflow: 'auto',
           }}
         >
           {drawer}
@@ -339,45 +401,47 @@ export function UserLayout({ children }: UserLayoutProps) {
               >
                 {[...menuItems, ...accountItems].find((item) => item.path === location.pathname)?.label || 'Dashboard'}
               </Typography>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                <LanguageSwitcher />
-                <ThemeSwitcher />
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer', ml: 'auto' }} onClick={handleUserMenuOpen}>
-                  <Avatar sx={{ width: 36, height: 36, bgcolor: 'primary.main' }}>
-                    {user?.username?.charAt(0)?.toUpperCase() || 'U'}
-                  </Avatar>
-                  <ChevronDown size={16} style={{ color: 'currentColor' }} />
+              {!isMobile && !sidebarCollapsed && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <LanguageSwitcher />
+                  <ThemeSwitcher />
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer' }} onClick={handleUserMenuOpen}>
+                    <Avatar sx={{ width: 36, height: 36, bgcolor: 'primary.main' }}>
+                      {user?.username?.charAt(0)?.toUpperCase() || 'U'}
+                    </Avatar>
+                    <ChevronDown size={16} style={{ color: 'currentColor' }} />
+                  </Box>
                 </Box>
-                <Menu
-                  anchorEl={userMenuAnchor}
-                  open={Boolean(userMenuAnchor)}
-                  onClose={handleUserMenuClose}
-                  anchorOrigin={{
-                    vertical: 'bottom',
-                    horizontal: 'right',
-                  }}
-                  transformOrigin={{
-                    vertical: 'top',
-                    horizontal: 'right',
-                  }}
-                >
-                  <MenuItem onClick={() => { handleNavigate('/profile'); handleUserMenuClose(); }}>
-                    <User size={18} style={{ marginRight: 12 }} />
-                    {t('userNav.profile')}
+              )}
+              <Menu
+                anchorEl={userMenuAnchor}
+                open={Boolean(userMenuAnchor)}
+                onClose={handleUserMenuClose}
+                anchorOrigin={{
+                  vertical: 'bottom',
+                  horizontal: 'right',
+                }}
+                transformOrigin={{
+                  vertical: 'top',
+                  horizontal: 'right',
+                }}
+              >
+                <MenuItem onClick={() => { handleNavigate('/profile'); handleUserMenuClose(); }}>
+                  <User size={18} style={{ marginRight: 12 }} />
+                  {t('userNav.profile')}
+                </MenuItem>
+                {isAdmin && (
+                  <MenuItem onClick={() => { handleNavigate('/console/dashboard'); handleUserMenuClose(); }}>
+                    <SettingsIcon size={18} style={{ marginRight: 12 }} />
+                    {t('userNav.adminConsole')}
                   </MenuItem>
-                  {isAdmin && (
-                    <MenuItem onClick={() => { handleNavigate('/console/dashboard'); handleUserMenuClose(); }}>
-                      <SettingsIcon size={18} style={{ marginRight: 12 }} />
-                      {t('userNav.adminConsole')}
-                    </MenuItem>
-                  )}
-                  <Divider />
-                  <MenuItem onClick={() => { handleLogout(); handleUserMenuClose(); }} sx={{ color: 'error.main' }}>
-                    <LogOut size={18} style={{ marginRight: 12 }} />
-                    {t('common.logout')}
-                  </MenuItem>
-                </Menu>
-              </Box>
+                )}
+                <Divider />
+                <MenuItem onClick={() => { handleLogout(); handleUserMenuClose(); }} sx={{ color: 'error.main' }}>
+                  <LogOut size={18} style={{ marginRight: 12 }} />
+                  {t('common.logout')}
+                </MenuItem>
+              </Menu>
             </Toolbar>
           </AppBar>
         )}
@@ -390,7 +454,7 @@ export function UserLayout({ children }: UserLayoutProps) {
           overflow: location.pathname === '/chat' ? 'hidden' : 'auto',
           width: '100%',
           minHeight: 0,
-          height: 0, // 强制使用 flex 计算高度
+          height: 0,
           position: 'relative',
         }}>
           {children}
@@ -398,4 +462,3 @@ export function UserLayout({ children }: UserLayoutProps) {
       </Box>
     </Box>
   );
-}
