@@ -136,6 +136,7 @@ function parseThinkingContent(content: string): { thinking: string; output: stri
     return { thinking, output };
   }
   return { thinking: '', output: content };
+  const { t } = useTranslation();
 }
 
 // ==================== 代码块组件 ====================
@@ -388,6 +389,7 @@ interface ThinkingBlockProps {
 }
 
 const ThinkingBlock = memo(function ThinkingBlock({ content }: ThinkingBlockProps) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const theme = useTheme();
 
@@ -449,6 +451,7 @@ interface ToolCallBlockProps {
 }
 
 const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockProps) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const theme = useTheme();
 
@@ -567,6 +570,7 @@ const MessageBubble = memo(function MessageBubble({
 }: MessageBubbleProps) {
   const theme = useTheme();
   const isUser = message.role === 'user';
+  const { t } = useTranslation();
   const [showActions, setShowActions] = useState(false);
 
   if (message.role === 'system') return null;
