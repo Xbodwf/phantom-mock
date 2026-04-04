@@ -13,7 +13,7 @@ FROM deps AS builder
 COPY tsconfig.json tsconfig.backend.json tsconfig.frontend.json vite.config.ts index.html ./
 COPY public/ ./public/
 COPY src/ ./src/
-RUN pnpm build
+RUN pnpm build:all
 
 # 生产阶段
 FROM base AS production

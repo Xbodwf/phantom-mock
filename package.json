@@ -9,6 +9,8 @@
     "dev:all": "concurrently \"pnpm dev\" \"pnpm dev:frontend\"",
     "build": "vite build",
     "build:frontend": "vite build",
+    "build:backend": "tsc -p tsconfig.backend.json",
+    "build:all": "concurrently \"pnpm build:backend\" \"pnpm build:frontend\"",
     "start": "tsx src/index.ts",
     "lint": "eslint src/frontend",
     "migrate": "tsx src/scripts/migrate.ts",
