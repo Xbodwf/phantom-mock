@@ -90,31 +90,6 @@ export function UserLayout({ children }: UserLayoutProps) {
 
   const drawer = (
     <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-      {!isMobile && (
-        <Box sx={{ 
-          p: 1, 
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'flex-end',
-        }}>
-          <Tooltip title={sidebarCollapsed ? t('common.expand', '展开') : t('common.collapse', '折叠')}>
-            <IconButton
-              onClick={toggleSidebarCollapsed}
-              size="small"
-              sx={{
-                color: 'text.secondary',
-                '&:hover': {
-                  backgroundColor: 'action.hover',
-                  color: 'text.primary',
-                },
-              }}
-            >
-              {sidebarCollapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
-            </IconButton>
-          </Tooltip>
-        </Box>
-      )}
-
       {/* 主菜单 */}
       <List sx={{ flex: 1, py: 1, overflowY: 'auto' }}>
         {menuItems.map((item) => (
@@ -330,6 +305,12 @@ export function UserLayout({ children }: UserLayoutProps) {
             zIndex: (theme) => theme.zIndex.drawer,
           }}
         >
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: 2 }}>
+            <Typography variant="h6">{t('nav.menu')}</Typography>
+            <IconButton onClick={toggleSidebarCollapsed}>
+              <X size={24} />
+            </IconButton>
+          </Box>
           {drawer}
         </Box>
       )}
@@ -462,3 +443,4 @@ export function UserLayout({ children }: UserLayoutProps) {
       </Box>
     </Box>
   );
+}
