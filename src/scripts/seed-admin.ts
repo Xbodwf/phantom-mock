@@ -22,6 +22,7 @@ async function seedAdmin() {
       username: 'admin',
       email: 'admin@phantom.local',
       passwordHash: hashedPassword,
+      uid: 'admin',
       balance: 1000000, // Large initial balance for testing
       totalUsage: 0,
       createdAt: Date.now(),

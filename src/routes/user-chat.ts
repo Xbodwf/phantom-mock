@@ -9,6 +9,7 @@ import { calculateCost, calculateTokens } from '../billing.js';
 import { forwardChatRequest, forwardStreamRequest, isModelForwardingConfigured, shouldUseNodeForwarding, hideKey, resolveForwardUrl, getForwardModelName } from '../forwarder.js';
 import { sendRequestToNode, isNodeConnected } from '../reverseWebSocket.js';
 import { getContentString, extractApiKey } from '../routes/v1/utils.js';
+import type { Message } from '../types.js';
 import {
   createChatSession,
   getChatSessionById,
@@ -148,7 +149,7 @@ async function handleUserChatRequest(
     }
 
     // 计算预估 token 数（用于计费）
-    const promptContent = body.messages.map(m => getContentString(m.content)).join('\n');
+    const promptContent = body.messages.map((m: Message) => getContentString(m.content)).join('\n');
     const estimatedPromptTokens = calculateTokens(promptContent);
 
     if (isStream) {
@@ -255,7 +256,7 @@ async function handleUserChatRequest(
 
       try {
         const content = await responsePromise;
-        const promptContent = body.messages.map(m => getContentString(m.content)).join('\n');
+        const promptContent = body.messages.map((m: Message) => getContentString(m.content)).join('\n');
         const response = buildResponse(content, body.model, requestId, promptContent);
         
         // 记录使用情况（非流式）
@@ -487,14 +488,14 @@ async function handleUserChatRequest(
 
     const timeout = setTimeout(() => {
       removePendingRequest(requestId);
-      const promptContent = body.messages.map(m => getContentString(m.content)).join('\n');
+      const promptContent = body.messages.map((m: Message) => getContentString(m.content)).join('\n');
       res.json(buildResponse('请求超时，请重试', body.model, requestId, promptContent));
     }, 10 * 60 * 1000);
 
     try {
       const content = await responsePromise;
       clearTimeout(timeout);
-      const promptContent = body.messages.map(m => getContentString(m.content)).join('\n');
+      const promptContent = body.messages.map((m: Message) => getContentString(m.content)).join('\n');
       const response = buildResponse(content, body.model, requestId, promptContent);
 
       // 记录使用情况
@@ -619,6 +620,7 @@ router.put('/sessions/:id', async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId;
     const { id } = req.params;
+    const sessionId = id as string;
     const updates = req.body;
 
     if (!userId) {
@@ -630,7 +632,7 @@ router.put('/sessions/:id', async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const session = await getChatSessionById(id);
+    const session = await getChatSessionById(sessionId);
     
     if (!session) {
       return res.status(404).json({
@@ -651,10 +653,10 @@ router.put('/sessions/:id', async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const success = await updateChatSession(id, updates);
+    const success = await updateChatSession(sessionId, updates);
     
     if (success) {
-      const updatedSession = await getChatSessionById(id);
+      const updatedSession = await getChatSessionById(sessionId);
       return res.json(updatedSession);
     } else {
       return res.status(500).json({
@@ -682,6 +684,7 @@ router.delete('/sessions/:id', async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId;
     const { id } = req.params;
+    const sessionId = id as string;
 
     if (!userId) {
       return res.status(401).json({
@@ -692,7 +695,7 @@ router.delete('/sessions/:id', async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const session = await getChatSessionById(id);
+    const session = await getChatSessionById(sessionId);
     
     if (!session) {
       return res.status(404).json({
@@ -713,7 +716,7 @@ router.delete('/sessions/:id', async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const success = await deleteChatSession(id);
+    const success = await deleteChatSession(sessionId);
     
     if (success) {
       return res.json({ success: true });

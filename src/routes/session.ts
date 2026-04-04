@@ -125,7 +125,7 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
     console.log(`[Session] GET /api/session/${id}, userId=${userId}`);
 
     // 直接从数据库获取会话
-    const session = await getChatSessionById(id);
+    const session = await getChatSessionById(id as string);
 
     if (!session) {
       console.log(`[Session] Session not found: ${id}`);
@@ -191,10 +191,10 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
     }
 
     // 检查会话是否存在
-    const session = await getChatSessionById(id);
+    const session = await getChatSessionById(id as string);
 
     if (!session) {
-      return res.status(404).json({
+      return res.status(404). json({
         error: {
           message: 'Session not found',
           type: 'not_found_error',
@@ -213,10 +213,10 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
     }
 
     console.log(`[Session] Updating session: ${id}`);
-    const success = await updateChatSession(id, updates);
+    const success = await updateChatSession(id as string, updates);
 
     if (success) {
-      const updatedSession = await getChatSessionById(id);
+      const updatedSession = await getChatSessionById(id as string);
       return res.json({
         ...updatedSession,
         isOwner: true,
@@ -259,10 +259,10 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
     }
 
     // 检查会话是否存在
-    const session = await getChatSessionById(id);
+    const session = await getChatSessionById(id as string);
 
     if (!session) {
-      return res.status(404).json({
+      return res.status(404). json({
         error: {
           message: 'Session not found',
           type: 'not_found_error',
@@ -281,7 +281,7 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
     }
 
     console.log(`[Session] Deleting session: ${id}`);
-    const success = await deleteChatSession(id);
+    const success = await deleteChatSession(id as string);
 
     if (success) {
       return res.json({ success: true });

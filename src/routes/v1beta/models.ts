@@ -236,11 +236,11 @@ async function handleGeminiRequest(
  }
 
  // 检查是否配置了转发
- const hasForwarding = model.forwardingMode === 'none'
+  const hasForwarding = model.forwardingMode === 'none'
  ? false
- : isModelForwardingConfigured(runtimeModel);
+ : isModelForwardingConfigured(runtimeModel!);
 
-  if (hasForwarding) {
+  if (hasForwarding && runtimeModel) {
     // 配置了转发
     console.log(`[Gemini Forwarder] 转发模式：${runtimeModel.api_type || 'google'} API`);
 

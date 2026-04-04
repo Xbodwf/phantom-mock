@@ -70,19 +70,18 @@ export async function deleteProviderById(id: string): Promise<boolean> {
 }
 
 export async function addProviderKey(providerId: string, key: ProviderApiKey): Promise<Provider | null> {
- const db = getDB();
- const collection = db.collection(COLLECTION_NAME);
+  const db = getDB();
+  const collection = db.collection(COLLECTION_NAME);
 
- const updated = await collection.findOneAndUpdate(
- { id: providerId },
- { $push: { keys: key }, $set: { updatedAt: now() } },
- { returnDocument: 'after' }
- );
+  const updated = await collection.findOneAndUpdate(
+    { id: providerId },
+    { $push: { keys: key as any }, $set: { updatedAt: now() } },
+    { returnDocument: 'after' }
+  );
 
- if (!updated) return null;
- return toEntity<Provider>(updated as any);
+  if (!updated) return null;
+  return toEntity<Provider>(updated as any);
 }
-
 export async function updateProviderKey(providerId: string, keyId: string, updates: Partial<ProviderApiKey>): Promise<Provider | null> {
  const db = getDB();
  const collection = db.collection(COLLECTION_NAME);
@@ -103,19 +102,18 @@ export async function updateProviderKey(providerId: string, keyId: string, updat
 }
 
 export async function deleteProviderKey(providerId: string, keyId: string): Promise<Provider | null> {
- const db = getDB();
- const collection = db.collection(COLLECTION_NAME);
+  const db = getDB();
+  const collection = db.collection(COLLECTION_NAME);
 
- const updated = await collection.findOneAndUpdate(
- { id: providerId },
- { $pull: { keys: { id: keyId } }, $set: { updatedAt: now() } },
- { returnDocument: 'after' }
- );
+  const updated = await collection.findOneAndUpdate(
+    { id: providerId },
+    { $pull: { keys: { id: keyId } as any }, $set: { updatedAt: now() } },
+    { returnDocument: 'after' }
+  );
 
- if (!updated) return null;
- return toEntity<Provider>(updated as any);
+  if (!updated) return null;
+  return toEntity<Provider>(updated as any);
 }
-
 export async function selectRoundRobinProviderKey(providerId: string): Promise<{ provider: Provider; key: ProviderApiKey } | null> {
  const provider = await getProviderById(providerId);
  if (!provider || !provider.enabled) return null;

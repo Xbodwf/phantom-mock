@@ -4,7 +4,7 @@
 
 import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
-import type { RedeemCodeManager } from '../payment/redeemCodeManager.js';
+import type { RedeemCodeManager, RedeemCodeCreateRequest } from '../payment/redeemCodeManager.js';
 
 export function createAdminPaymentRoutes(redeemCodeManager: RedeemCodeManager): RouterType {
   const router: RouterType = Router();

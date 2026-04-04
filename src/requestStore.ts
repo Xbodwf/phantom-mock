@@ -22,3 +22,6 @@ export function getAllPendingRequests(): PendingRequest[] {
 export function getPendingCount(): number {
   return pendingRequests.size;
 }
+
+// 重新导出 PendingRequest 类型
+export type { PendingRequest } from './types.js';

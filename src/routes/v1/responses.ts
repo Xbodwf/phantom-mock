@@ -188,7 +188,8 @@ router.post('/', async (req: Request, res: Response) => {
  if (item.role === 'assistant') {
  return { role: 'assistant' as const, content: item.content || '' };
  }
- return { role: (item.role || 'user') as const, content: item.content || '' };
+ const role = item.role || 'user';
+ return { role: role as 'user', content: item.content || '' };
  });
  if (body.instructions && messages[0]?.role !== 'system') {
  messages.unshift({ role: 'system', content: body.instructions });

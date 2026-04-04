@@ -262,6 +262,7 @@ export interface User {
   // 用户拥有的资源
   ownedModels?: string[];          // 自属模型ID列表
   actions?: string[];              // 用户创建的 Actions
+  apiKeys?: Array<{ id: string; key: string; enabled: boolean }>;  // 用户拥有的 API Keys
 
   // 实名信息（可选）
   realName?: string;               // 身份证名字
@@ -270,6 +271,7 @@ export interface User {
   // 时间戳
   createdAt: number;               // 创建时间
   lastLoginAt?: number;            // 最后登录时间
+  uidSetAt?: number;               // UID 设置时间
   enabled: boolean;                // 账户是否启用
 
   // 用户设置
