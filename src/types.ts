@@ -644,33 +644,6 @@ export interface WSMessage {
       code?: string;
     };
   };
-} | {
-    requestId: string;
-    content: string;
-  } | {
-    requestId: string;
-    images: Array<{ url?: string; b64_json?: string }>;
-  } | {
-    requestId: string;
-    videos: Array<{ url?: string; b64_json?: string }>;
-  } | {
-    message: string;
-  } | {
-    models: Model[];
-  } | {
-    clientId?: string;
-    capabilities?: string[];
-    maxConcurrentRequests?: number;
-  } | {
-    success: boolean;
-    clientId: string;
-    message?: string;
-  } | {
-    success: boolean;
-    nodeId: string;
-    message?: string;
-    serverTime?: number;
-  };
 }
 
 // 待处理的请求
