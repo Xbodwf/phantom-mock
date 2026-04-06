@@ -122,19 +122,13 @@ export function getForwardModelName(model: Model, requestedModel: string): strin
   return model.forwardModelName || requestedModel;
 }
 
-function hasUrlTemplateConfigured(model: Model): boolean {
- const templates = model.api_url_templates;
- if (!templates) return false;
- return Object.values(templates).some(value => typeof value === 'string' && value.trim() !== '');
-}
-
 export function isModelForwardingConfigured(model: Model): boolean {
  // 如果是节点转发模式，检查节点是否在线
  if (model.forwardingMode === 'node' && model.nodeId) {
  const node = getNodeById(model.nodeId);
  return node?.status === 'online';
  }
- 
+
  // 如果是 provider 转发模式，检查 provider 是否配置
  if (model.forwardingMode === 'provider' && model.providerId) {
  const provider = getProviderById(model.providerId);
@@ -142,9 +136,9 @@ export function isModelForwardingConfigured(model: Model): boolean {
  return true;
  }
  }
- 
- // 兼容旧的配置方式
- return !!model.api_key && (!!model.api_base_url || hasUrlTemplateConfigured(model));
+
+ // 检查是否有 api_key 和 api_base_url
+ return !!model.api_key && !!model.api_base_url;
 }
 
 type ForwardEndpoint =
@@ -164,55 +158,6 @@ function appendPath(baseUrl: string, path: string): string {
  const normalizedBase = normalizeBaseUrl(baseUrl);
  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
  return `${normalizedBase}${normalizedPath}`;
-}
-
-function applyUrlTemplate(
- template: string,
- params: {
- baseUrl: string;
- requestedModel: string;
- forwardModel: string;
- apiKey: string;
- }
-): string {
- return template.replace(/\{(baseUrl|model|forwardModel|apiKey)\}/g, (_, key: string) => {
- switch (key) {
- case 'baseUrl':
- return params.baseUrl;
- case 'model':
- return encodeURIComponent(params.requestedModel);
- case 'forwardModel':
- return params.forwardModel;
- case 'apiKey':
- return encodeURIComponent(params.apiKey);
- default:
- return '';
- }
- });
-}
-
-function getEndpointTemplate(model: Model, endpoint: ForwardEndpoint): string | undefined {
- const templates = model.api_url_templates;
- if (!templates) return undefined;
-
- switch (endpoint) {
- case 'chat':
- return templates.chat;
- case 'embeddings':
- return templates.embeddings;
- case 'rerank':
- return templates.rerank;
- case 'anthropicMessages':
- return templates.chat;
- case 'geminiGenerateContent':
- return templates.geminiGenerateContent;
- case 'geminiStreamGenerateContent':
- return templates.geminiStreamGenerateContent;
- case 'geminiEmbedContent':
- return templates.geminiEmbedContent;
- default:
- return undefined;
- }
 }
 
 export function resolveForwardUrl(
@@ -270,34 +215,6 @@ export function resolveForwardUrl(
  return `${baseUrl}${normalizedPath}`;
  }
 
- // 兼容旧的 api_url_templates
- const template = getEndpointTemplate(model, endpoint);
-
- // 如果模板是相对路径（以 / 开头或不包含 ://），需要 baseUrl
- if (template && template.trim()) {
- const trimmedTemplate = template.trim();
- 
- // 检测相对路径：以 / 开头或不包含协议
- const isRelativeUrl = trimmedTemplate.startsWith('/') || !trimmedTemplate.includes('://');
- 
- if (isRelativeUrl) {
- if (!baseUrl) {
- throw new Error(`Relative URL template "${trimmedTemplate}" requires a base URL from provider`);
- }
- // 确保路径以 / 开头
- const normalizedPath = trimmedTemplate.startsWith('/') ? trimmedTemplate : `/${trimmedTemplate}`;
- return `${baseUrl}${normalizedPath}`;
- }
- 
- // 绝对 URL 模板
- return applyUrlTemplate(trimmedTemplate, {
- baseUrl,
- requestedModel,
- forwardModel,
- apiKey: effectiveApiKey,
- });
- }
-
  if (!baseUrl) {
  throw new Error(`Model not configured for forwarding endpoint: ${endpoint}`);
  }
@@ -316,7 +233,9 @@ export function resolveForwardUrl(
  ? baseUrl
  : appendPath(baseUrl, '/rerank');
  case 'anthropicMessages':
- return appendPath(baseUrl, '/v1/messages');
+ return baseUrl.includes('/messages')
+ ? baseUrl
+ : appendPath(baseUrl, '/messages');
  case 'geminiGenerateContent':
  return `${baseUrl}/v1beta/models/${encodeURIComponent(forwardModel)}:generateContent?key=${encodeURIComponent(effectiveApiKey)}`;
  case 'geminiStreamGenerateContent':

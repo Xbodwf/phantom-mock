@@ -372,18 +372,22 @@ export function sendRequestToNode(nodeId: string, req: PendingRequest): boolean 
     return false;
   }
 
-  // 构建请求消息，包含 payload 字段
+  // 构建请求消息，与 websocket.ts 格式保持一致
   const msg = {
     type: 'request',
     payload: {
-      requestId: req.requestId,  // 使用驼峰命名
-      isStream: req.isStream,     // 流式/非流式标志
+      requestId: req.requestId,
+      data: req.request,
+      requestParams: req.requestParams,
+      requestType: req.requestType,
+      imageRequest: req.imageRequest,
+      videoRequest: req.videoRequest,
+      // 节点转发需要的额外信息
       method: 'POST',
       path: '/v1/chat/completions',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(req.request),
       // 额外信息供内部使用
       _internal: {
         requestParams: req.requestParams,
