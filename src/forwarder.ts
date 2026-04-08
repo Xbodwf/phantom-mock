@@ -233,9 +233,16 @@ export function resolveForwardUrl(
  ? baseUrl
  : appendPath(baseUrl, '/rerank');
  case 'anthropicMessages':
- return baseUrl.includes('/messages')
- ? baseUrl
- : appendPath(baseUrl, '/messages');
+ // 检查是否已包含/messages或/v1/messages
+ if (baseUrl.includes('/messages')) {
+ return baseUrl;
+ }
+ // 如果baseUrl已包含/v1，直接添加/messages，否则添加/v1/messages
+ if (baseUrl.includes('/v1')) {
+ return appendPath(baseUrl, '/messages');
+ } else {
+ return appendPath(baseUrl, '/v1/messages');
+ }
  case 'geminiGenerateContent':
  return `${baseUrl}/v1beta/models/${encodeURIComponent(forwardModel)}:generateContent?key=${encodeURIComponent(effectiveApiKey)}`;
  case 'geminiStreamGenerateContent':
@@ -569,10 +576,38 @@ async function forwardToAnthropic(
 
   const anthropicBody = {
     model: forwardModel,
-    messages: nonSystemMessages.map(m => ({
-      role: m.role === 'assistant' ? 'assistant' : 'user',
-      content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-    })),
+    messages: nonSystemMessages.map(m => {
+      // 正确处理多模态消息
+      let content: any;
+      if (typeof m.content === 'string') {
+        content = m.content;
+      } else if (Array.isArray(m.content)) {
+        // 转换OpenAI的多模态格式到Anthropic格式
+        content = m.content.map((item: any) => {
+          if (item.type === 'text') {
+            return { type: 'text', text: item.text };
+          } else if (item.type === 'image_url') {
+            // Anthropic使用不同的图片格式
+            return {
+              type: 'image',
+              source: {
+                type: 'url',
+                url: item.image_url?.url || '',
+              },
+            };
+          }
+          return item;
+        });
+      } else {
+        // 其他情况保持原样
+        content = m.content;
+      }
+      
+      return {
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content,
+      };
+    }),
     max_tokens: body.max_tokens || 4096,
     temperature: body.temperature,
     top_p: body.top_p,
@@ -642,10 +677,45 @@ async function forwardToGoogle(
   console.log(`[Forwarder] Gemini 转发 URL: ${url}`);
 
   // 转换消息格式：OpenAI -> Google
-  const contents = body.messages.map(m => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }],
-  }));
+  const contents = body.messages.map(m => {
+    // 正确处理多模态消息
+    let parts: any[];
+    if (typeof m.content === 'string') {
+      parts = [{ text: m.content }];
+    } else if (Array.isArray(m.content)) {
+      // 转换OpenAI的多模态格式到Google Gemini格式
+      parts = m.content.map((item: any) => {
+        if (item.type === 'text') {
+          return { text: item.text };
+        } else if (item.type === 'image_url') {
+          // Google Gemini支持inline_data格式的图片
+          const imageUrl = item.image_url?.url || '';
+          // 检查是否是base64图片
+          if (imageUrl.startsWith('data:')) {
+            const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+            if (matches) {
+              return {
+                inlineData: {
+                  mimeType: matches[1],
+                  data: matches[2],
+                },
+              };
+            }
+          }
+          // URL图片需要先下载，这里暂时忽略
+          return { text: `[Image: ${imageUrl}]` };
+        }
+        return { text: JSON.stringify(item) };
+      });
+    } else {
+      parts = [{ text: JSON.stringify(m.content) }];
+    }
+    
+    return {
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts,
+    };
+  });
 
   const googleBody = {
     contents,

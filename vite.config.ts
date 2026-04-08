@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import reactSwc from '@vitejs/plugin-react-swc'
+import legacy from '@vitejs/plugin-legacy'
 
 // 从环境变量获取后端端口，默认 7143
 const backendPort = parseInt(process.env.BACKEND_PORT || process.env.PORT || '7143')
@@ -11,7 +12,15 @@ const backendPort = parseInt(process.env.BACKEND_PORT || process.env.PORT || '71
 const reactCompiler = process.env.VITE_REACT_COMPILER || 'swc'
 
 export default defineConfig({
-  plugins: [reactCompiler === 'swc' ? reactSwc() : react()],
+  plugins: [
+    reactCompiler === 'swc' ? reactSwc() : react(),
+    legacy({
+      targets: ['Chrome >= 90'],
+      additionalLegacyPolyfills: ['regenerator-runtime/runtime'],
+      modernPolyfills: true,
+      renderLegacyChunks: true,
+    }),
+  ],
   root: '.',
   publicDir: 'public',
   server: {

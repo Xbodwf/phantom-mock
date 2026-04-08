@@ -1,9 +1,18 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react-swc'
 import reactSwc from '@vitejs/plugin-react-swc'
+import legacy from '@vitejs/plugin-legacy'
 
 export default defineConfig({
-  plugins: [reactSwc()],
+  plugins: [
+    reactSwc(),
+    legacy({
+      targets: ['Chrome >= 90'],
+      additionalLegacyPolyfills: ['regenerator-runtime/runtime'],
+      modernPolyfills: true,
+      renderLegacyChunks: true,
+    }),
+  ],
   root: '.',
   publicDir: 'public',
   
