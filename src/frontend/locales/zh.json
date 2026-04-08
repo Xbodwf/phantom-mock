@@ -169,7 +169,17 @@
     "confirmDelete": "确定要删除这个对话吗？",
     "newSession": "新对话",
     "welcome": "开始新对话",
-    "welcomeDesc": "点击左侧按钮创建新对话"
+    "welcomeDesc": "点击左侧按钮创建新对话",
+    "messageInfo": "消息信息",
+    "role": "角色",
+    "user": "用户",
+    "assistant": "AI助手",
+    "model": "模型",
+    "tokenUsage": "Token使用量",
+    "promptTokens": "提示词",
+    "completionTokens": "补全",
+    "totalTokens": "总计",
+    "timestamp": "时间戳"
   },
   "adminNav": {
     "dashboard": "仪表板",

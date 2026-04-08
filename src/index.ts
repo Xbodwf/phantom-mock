@@ -266,6 +266,10 @@ app.use('/api/user', authMiddleware, userRoutes);
 import userChatRoutes from './routes/user-chat.js';
 app.use('/api/chat', authMiddleware, userChatRoutes);
 
+// ==================== 附件路由 ====================
+import attachmentRoutes from './routes/attachments.js';
+app.use('/api/attachments', attachmentRoutes);
+
 // ==================== 统一会话管理路由 ====================
 // 所有聊天会话 API 统一在 /api/session/* 下
 // GET /api/session/:id 支持可选认证（公开会话无需认证）

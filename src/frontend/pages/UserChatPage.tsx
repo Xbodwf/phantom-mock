@@ -61,6 +61,7 @@ import {
   Globe,
   Globe2,
   Lock,
+  Info,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -81,6 +82,12 @@ type ChatMessage = {
   files?: UploadedFile[];
   thinking?: string;
   toolCalls?: ToolCall[];
+  model?: string; // AI消息使用的模型
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
 };
 
 type ToolCall = {
@@ -568,6 +575,7 @@ interface MessageBubbleProps {
   onEdit: () => void;
   onResend: () => void;
   onImagePreview: (url: string) => void;
+  onInfo?: () => void;
 }
 
 const MessageBubble = memo(function MessageBubble({
@@ -581,6 +589,7 @@ const MessageBubble = memo(function MessageBubble({
   onEdit,
   onResend,
   onImagePreview,
+  onInfo,
 }: MessageBubbleProps) {
   const theme = useTheme();
   const isUser = message.role === 'user';
@@ -791,6 +800,11 @@ const MessageBubble = memo(function MessageBubble({
                   <Copy size={14} />
                 </IconButton>
               </Tooltip>
+              <Tooltip title="查看信息">
+                <IconButton size="small" onClick={onInfo} sx={{ opacity: 0.6 }}>
+                  <Info size={14} />
+                </IconButton>
+              </Tooltip>
               <Tooltip title="删除">
                 <IconButton 
                   size="small" 
@@ -853,6 +867,10 @@ export function UserChatPage() {
   // 图片预览
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [previewImageUrl, setPreviewImageUrl] = useState('');
+
+  // 消息信息对话框
+  const [messageInfoOpen, setMessageInfoOpen] = useState(false);
+  const [messageInfo, setMessageInfo] = useState<ChatMessage | null>(null);
 
   // 滚动控制
   const [isUserNearBottom, setIsUserNearBottom] = useState(true);
@@ -1160,6 +1178,11 @@ export function UserChatPage() {
     }
   }, [t]);
 
+  const handleShowMessageInfo = useCallback((message: ChatMessage) => {
+    setMessageInfo(message);
+    setMessageInfoOpen(true);
+  }, []);
+
   const handleDeleteMessage = useCallback(
     async (messageIndex: number) => {
       if (!currentSessionId) return;
@@ -1437,7 +1460,7 @@ export function UserChatPage() {
             streamUpdateTimeoutRef.current = null;
           }
 
-          // 最终更新，包含工具调用
+          // 最终更新，包含工具调用和模型信息
           setSessions((prev) =>
             prev.map((s) => {
               if (s.id === currentSessionId) {
@@ -1448,6 +1471,7 @@ export function UserChatPage() {
                     ...messages[lastIndex],
                     content: streamContentRef.current,
                     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                    model: session.model, // 保存模型信息
                   };
                 }
                 return { ...s, messages };
@@ -1474,6 +1498,8 @@ export function UserChatPage() {
                 ...messages[lastIndex],
                 content: assistantContent,
                 toolCalls,
+                model: session.model, // 保存模型信息
+                usage: data.usage, // 保存token使用量
               };
               return { ...s, messages, updatedAt: Date.now() };
             }
@@ -1731,6 +1757,7 @@ export function UserChatPage() {
                     setPreviewImageUrl(url);
                     setImagePreviewOpen(true);
                   }}
+                  onInfo={() => handleShowMessageInfo(message)}
                 />
               ))}
               <div ref={messagesEndRef} />
@@ -2283,6 +2310,86 @@ export function UserChatPage() {
             sx={{ maxWidth: '100%', maxHeight: '80vh', objectFit: 'contain', borderRadius: '8px' }}
           />
         </Box>
+      </Dialog>
+
+      {/* 消息信息对话框 */}
+      <Dialog
+        open={messageInfoOpen}
+        onClose={() => setMessageInfoOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: '16px', bgcolor: 'background.default' } }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          {t('chat.messageInfo', '消息信息')}
+          <IconButton onClick={() => setMessageInfoOpen(false)}>
+            <X size={20} />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {messageInfo && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                  {t('chat.role', '角色')}
+                </Typography>
+                <Typography variant="body1">
+                  {messageInfo.role === 'user' ? t('chat.user', '用户') : t('chat.assistant', 'AI助手')}
+                </Typography>
+              </Box>
+              
+              {messageInfo.model && (
+                <Box>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    {t('chat.model', '模型')}
+                  </Typography>
+                  <Typography variant="body1" sx={{ fontFamily: 'monospace' }}>
+                    {messageInfo.model}
+                  </Typography>
+                </Box>
+              )}
+              
+              {messageInfo.usage && (
+                <Box>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    {t('chat.tokenUsage', 'Token使用量')}
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                    <Typography variant="body2">
+                      {t('chat.promptTokens', '提示词')}: {messageInfo.usage.prompt_tokens}
+                    </Typography>
+                    <Typography variant="body2">
+                      {t('chat.completionTokens', '补全')}: {messageInfo.usage.completion_tokens}
+                    </Typography>
+                    <Typography variant="body2">
+                      {t('chat.totalTokens', '总计')}: {messageInfo.usage.total_tokens}
+                    </Typography>
+                  </Box>
+                </Box>
+              )}
+              
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                  {t('chat.timestamp', '时间戳')}
+                </Typography>
+                <Typography variant="body1">
+                  {new Date(messageInfo.timestamp).toLocaleString()}
+                </Typography>
+              </Box>
+              
+              {messageInfo.thinking && (
+                <Box>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    {t('chat.thinkingProcess', '思考过程')}
+                  </Typography>
+                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {messageInfo.thinking.substring(0, 200)}...
+                  </Typography>
+                </Box>
+              )}
+            </Box>
+          )}
+        </DialogContent>
       </Dialog>
       </Box>
 
