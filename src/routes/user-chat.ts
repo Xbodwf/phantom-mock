@@ -319,6 +319,32 @@ async function handleUserChatRequest(
           });
         }
         
+        // 自动更新会话：添加AI消息
+        if (sessionId) {
+          try {
+            const { getChatSessionById, updateChatSession } = await import('../storage.js');
+            const session = await getChatSessionById(sessionId);
+            
+            if (session && session.userId === userId) {
+              const newMessages = [...session.messages, {
+                role: 'assistant' as const,
+                content: content,
+                timestamp: Date.now(),
+                model: body.model,
+              }];
+              
+              await updateChatSession(sessionId, { 
+                messages: newMessages,
+                updatedAt: Date.now(),
+              });
+              
+              console.log(`[User Chat] Updated session ${sessionId} with AI message`);
+            }
+          } catch (error) {
+            console.error('[User Chat] Failed to update session with AI message:', error);
+          }
+        }
+        
         res.json(response);
       } catch (error) {
         res.status(500).json({
