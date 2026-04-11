@@ -672,10 +672,16 @@ export interface PendingRequest {
     user?: string;
   };
   // 请求类型
-  requestType?: 'chat' | 'image' | 'video';
+  requestType?: 'chat' | 'image' | 'video' | 'embedding';
   // 图片/视频请求特有参数
   imageRequest?: ImageGenerationRequest;
   videoRequest?: VideoGenerationRequest;
+  // embedding请求特有参数
+  embeddingRequest?: {
+    model: string;
+    input: string | string[];
+    encoding_format?: 'float' | 'base64';
+  };
 }
 
 // 图片生成请求

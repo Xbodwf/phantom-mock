@@ -51,6 +51,7 @@ function isModelSupportedByEndpoint(model: Model | null, endpoint: string): bool
     // 嵌入端点：仅支持 embedding
     case 'embeddings':
     case 'embedContent':
+    case 'batchEmbedContents':
       return modelType === 'embedding';
 
     // 图片生成端点：仅支持 image

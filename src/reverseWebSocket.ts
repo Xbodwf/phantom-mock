@@ -373,18 +373,34 @@ export function sendRequestToNode(nodeId: string, req: PendingRequest): boolean 
   }
 
   // 构建请求消息，与 websocket.ts 格式保持一致
+  // 根据请求类型确定路径
+  let path = '/v1/chat/completions';
+  let data: any = req.request;
+  
+  if (req.requestType === 'embedding') {
+    path = '/v1/embeddings';
+    data = req.requestParams || req.request;
+  } else if (req.requestType === 'image' && req.imageRequest) {
+    path = '/v1/images/generations';
+    data = req.imageRequest;
+  } else if (req.requestType === 'video' && req.videoRequest) {
+    path = '/v1/videos/generations';
+    data = req.videoRequest;
+  }
+  
   const msg = {
     type: 'request',
     payload: {
       requestId: req.requestId,
-      data: req.request,
+      data: data,
       requestParams: req.requestParams,
       requestType: req.requestType,
       imageRequest: req.imageRequest,
       videoRequest: req.videoRequest,
+      embeddingRequest: req.embeddingRequest,
       // 节点转发需要的额外信息
       method: 'POST',
-      path: '/v1/chat/completions',
+      path: path,
       headers: {
         'Content-Type': 'application/json',
       },
@@ -416,6 +432,7 @@ export function broadcastRequestToReverseClients(req: PendingRequest): number {
       requestType: req.requestType,
       imageRequest: req.imageRequest,
       videoRequest: req.videoRequest,
+      embeddingRequest: req.embeddingRequest,
     },
   };
   const data = JSON.stringify(msg);

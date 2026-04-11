@@ -308,24 +308,95 @@ export async function forwardEmbeddingsRequest(
     const forwardModel = getForwardModelName(model, requestedModel);
 
     if (apiType === 'google') {
-      const url = resolveForwardUrl(model, 'geminiEmbedContent', requestedModel, forwardModel);
-      console.log(`[Forwarder] Embeddings 转发 URL: ${url}`);
-      const input = Array.isArray(body.input) ? body.input[0] : body.input;
-      const googleBody = {
-        model: `models/${forwardModel}`,
-        content: {
-          parts: [{ text: typeof input === 'string' ? input : JSON.stringify(input) }],
-        },
-      };
+      // 对于Google API，使用batchEmbedContents处理批量输入
+      const inputs = Array.isArray(body.input) ? body.input : [body.input];
+      
+      if (inputs.length === 1) {
+        // 单个输入使用embedContent
+        const url = resolveForwardUrl(model, 'geminiEmbedContent', requestedModel, forwardModel);
+        console.log(`[Forwarder] Embeddings 转发 URL (embedContent): ${url}`);
+        
+        const input = inputs[0];
+        const googleBody = {
+          model: `models/${forwardModel}`,
+          content: {
+            parts: [{ text: typeof input === 'string' ? input : JSON.stringify(input) }],
+          },
+        };
 
-      const response = await axios.post(url, googleBody, {
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        timeout: 120000,
-      });
+        const apiKey = getEffectiveApiKey(model);
+        const response = await axios.post(url, googleBody, {
+          headers: {
+            'Content-Type': 'application/json',
+            ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
+          },
+          timeout: 120000,
+        });
 
-      return { success: true, response: response.data };
+        // 转换Google格式到OpenAI格式
+        const embedding = response.data.embedding?.values || response.data.values || [];
+        return {
+          success: true,
+          response: {
+            object: 'list',
+            data: [{
+              object: 'embedding',
+              embedding,
+              index: 0,
+            }],
+            model: requestedModel,
+            usage: {
+              prompt_tokens: 0,
+              total_tokens: 0,
+            },
+          },
+        };
+      } else {
+        // 批量输入使用batchEmbedContents
+        const baseUrl = model.api_base_url || '';
+        const url = `${baseUrl}/v1beta/models/${forwardModel}:batchEmbedContents`;
+        console.log(`[Forwarder] Embeddings 转发 URL (batchEmbedContents): ${url}`);
+        
+        const requests = inputs.map(input => ({
+          content: {
+            parts: [{ text: typeof input === 'string' ? input : JSON.stringify(input) }],
+          },
+        }));
+        
+        const googleBody = {
+          requests,
+        };
+
+        const apiKey = getEffectiveApiKey(model);
+        const response = await axios.post(url, googleBody, {
+          headers: {
+            'Content-Type': 'application/json',
+            ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
+          },
+          timeout: 120000,
+        });
+
+        // 转换Google格式到OpenAI格式
+        const embeddings = response.data.embeddings || [];
+        const data = embeddings.map((item: any, index: number) => ({
+          object: 'embedding',
+          embedding: item.embedding?.values || item.values || [],
+          index,
+        }));
+
+        return {
+          success: true,
+          response: {
+            object: 'list',
+            data,
+            model: requestedModel,
+            usage: {
+              prompt_tokens: 0,
+              total_tokens: 0,
+            },
+          },
+        };
+      }
     }
 
     const url = resolveForwardUrl(model, 'embeddings', requestedModel, forwardModel);
@@ -334,6 +405,7 @@ export async function forwardEmbeddingsRequest(
 
     console.log(`[Forwarder] Embeddings 转发 URL: ${url}`);
     console.log(`[Forwarder] API Key: ${hideKey(apiKey)}`);
+    console.log(`[Forwarder] Request body:`, JSON.stringify(forwardBody));
 
     const response = await axios.post(url, forwardBody, {
       headers: {
@@ -342,6 +414,15 @@ export async function forwardEmbeddingsRequest(
       },
       timeout: 120000,
     });
+
+    console.log(`[Forwarder] Embeddings response status: ${response.status}`);
+    console.log(`[Forwarder] Embeddings response data:`, JSON.stringify(response.data).substring(0, 200));
+
+    // 确保响应数据格式正确
+    if (!response.data || !response.data.data || !Array.isArray(response.data.data)) {
+      console.error('[Forwarder] Invalid embedding response format:', response.data);
+      return { success: false, error: 'Invalid embedding response format' };
+    }
 
     return { success: true, response: response.data };
   } catch (error: any) {
