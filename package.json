@@ -13,7 +13,7 @@
     "build:backend:fast": "swc src -d dist --config-file .swcrc",
     "build:backend:oxc": "tsx scripts/build-oxc.ts",
     "build:all": "concurrently \"pnpm build:backend\" \"pnpm build:frontend\"",
-    "build:ssr": "pnpm build:ssr:client && pnpm build:ssr:server && pnpm build:backend:oxc",
+    "build:ssr": "pnpm build:ssr:client && pnpm build:ssr:server && pnpm build:backend",
     "build:ssr:oxc": "pnpm build:ssr:client && pnpm build:ssr:server && pnpm build:backend:oxc",
     "build:ssr:client": "vite build --config vite-ssr.config.ts",
     "build:ssr:server": "vite build --config vite-ssr.config.server.ts",
