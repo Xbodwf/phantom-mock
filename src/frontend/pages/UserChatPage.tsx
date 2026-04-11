@@ -118,6 +118,8 @@ type UploadedFile = {
   dataUrl?: string;
   textContent?: string;
   attachmentId?: string; // 服务器附件ID
+  loading?: boolean; // 加载状态
+  progress?: number; // 上传进度 0-100
 };
 
 type ApiType = 'openai-chat' | 'openai-responses' | 'anthropic-messages' | 'gemini';
@@ -1260,41 +1262,62 @@ export function UserChatPage() {
         name: file.name,
         type: file.type,
         size: file.size,
+        loading: true, // 初始为加载状态
+        progress: 0,
       };
 
-      if (isImage) {
-        // 读取为base64用于预览
-        const dataUrl = await readFileAsDataUrl(file);
-        uploaded.dataUrl = dataUrl; // 临时用于预览
-        
-        // 如果已登录且有当前会话，立即上传到服务器
-        if (token && currentSessionId) {
-          try {
-            const { uploadAttachment } = await import('../utils/attachments');
-            const attachment = await uploadAttachment(
-              token,
-              currentSessionId,
-              uploaded.id, // 使用临时ID作为messageId
-              file.name,
-              file.type,
-              dataUrl
-            );
-            uploaded.attachmentId = attachment.id;
-            console.log(`[Chat] Uploaded attachment: ${attachment.id}`);
-          } catch (error) {
-            console.error('[Chat] Failed to upload attachment:', error);
-            // 上传失败，继续使用本地base64
-          }
-        }
-      } else {
-        uploaded.textContent = await readFileAsText(file);
-      }
-
+      // 立即添加到列表（显示加载状态）
       nextFiles.push(uploaded);
     }
 
+    // 立即更新状态，显示文件（带加载状态）
     setFiles((prev) => [...prev, ...nextFiles]);
     event.target.value = '';
+
+    // 异步处理文件加载
+    for (const uploaded of nextFiles) {
+      const file = Array.from(selected).find(f => f.name === uploaded.name && f.size === uploaded.size);
+      if (!file) continue;
+
+      const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
+
+      try {
+        // 模拟进度更新
+        setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, progress: 30 } : f));
+
+        if (isImage) {
+          const dataUrl = await readFileAsDataUrl(file);
+          setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, dataUrl, progress: 60 } : f));
+          
+          // 如果已登录且有当前会话，上传到服务器
+          if (token && currentSessionId) {
+            try {
+              const { uploadAttachment } = await import('../utils/attachments');
+              const attachment = await uploadAttachment(
+                token,
+                currentSessionId,
+                uploaded.id,
+                file.name,
+                file.type,
+                dataUrl
+              );
+              setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, attachmentId: attachment.id, loading: false, progress: 100 } : f));
+            } catch (error) {
+              console.error('[Chat] Failed to upload attachment:', error);
+              setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, loading: false, progress: 100 } : f));
+            }
+          } else {
+            setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, loading: false, progress: 100 } : f));
+          }
+        } else {
+          const textContent = await readFileAsText(file);
+          setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, textContent, loading: false, progress: 100 } : f));
+        }
+      } catch (error) {
+        console.error('[Chat] Failed to process file:', error);
+        setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, loading: false, progress: 0 } : f));
+      }
+    }
   };
 
   const removeFile = useCallback((id: string) => {
@@ -1988,8 +2011,46 @@ export function UserChatPage() {
                             height: 64,
                             objectFit: 'cover',
                             borderRadius: '8px',
+                            opacity: file.loading ? 0.5 : 1,
                           }}
                         />
+                        {/* 进度条 */}
+                        {file.loading && (
+                          <Box
+                            sx={{
+                              position: 'absolute',
+                              bottom: 0,
+                              left: 0,
+                              right: 0,
+                              height: 4,
+                              bgcolor: 'rgba(0,0,0,0.1)',
+                              borderRadius: '0 0 8px 8px',
+                            }}
+                          >
+                            <Box
+                              sx={{
+                                height: '100%',
+                                width: `${file.progress || 0}%`,
+                                bgcolor: 'primary.main',
+                                borderRadius: '0 0 8px 8px',
+                                transition: 'width 0.3s',
+                              }}
+                            />
+                          </Box>
+                        )}
+                        {/* 加载中图标 */}
+                        {file.loading && (
+                          <Box
+                            sx={{
+                              position: 'absolute',
+                              top: '50%',
+                              left: '50%',
+                              transform: 'translate(-50%, -50%)',
+                            }}
+                          >
+                            <CircularProgress size={20} />
+                          </Box>
+                        )}
                         <IconButton
                           size="small"
                           onClick={() => removeFile(file.id)}
@@ -2009,10 +2070,10 @@ export function UserChatPage() {
                       </>
                     ) : (
                       <Chip
-                        label={file.name}
+                        label={file.loading ? `${file.name} (${file.progress || 0}%)` : file.name}
                         onDelete={() => removeFile(file.id)}
                         size="small"
-                        icon={<Paperclip size={14} />}
+                        icon={file.loading ? <CircularProgress size={14} /> : <Paperclip size={14} />}
                       />
                     )}
                   </Box>
