@@ -8,6 +8,9 @@ import { getModel, getUserById, updateUser, createUsageRecord, getAllModels, get
 import { calculateCost, calculateTokens } from '../billing.js';
 import { forwardChatRequest, forwardStreamRequest, isModelForwardingConfigured, shouldUseNodeForwarding, hideKey, resolveForwardUrl, getForwardModelName } from '../forwarder.js';
 import { sendRequestToNode, isNodeConnected } from '../reverseWebSocket.js';
+
+// 存储流式响应的内容（用于会话自动更新）
+const streamContentMap = new Map<string, string>();
 import { getContentString, extractApiKey } from '../routes/v1/utils.js';
 import type { Message } from '../types.js';
 import {
@@ -388,8 +391,105 @@ async function handleUserChatRequest(
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
 
+      // 包装 res 对象，拦截写入的数据并实时保存到会话
+      let streamingContent = '';
+      const originalWrite = res.write.bind(res);
+      const wrappedRes = {
+        ...res,
+        write: (chunk: any) => {
+          originalWrite(chunk);
+          
+          // 解析 SSE 数据并提取内容
+          const chunkStr = chunk.toString();
+          const lines = chunkStr.split('\n');
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') continue;
+              
+              try {
+                const json = JSON.parse(data);
+                const delta = json.choices?.[0]?.delta?.content;
+                if (delta) {
+                  streamingContent += delta;
+                  
+                  // 实时更新会话
+                  if (sessionId) {
+                    getChatSessionById(sessionId).then(async (session) => {
+                      if (session && session.ownerId === userId) {
+                        let aiMessageIndex = session.messages.findIndex(
+                          (m: any) => m.role === 'assistant' && m._isStreaming
+                        );
+                        
+                        if (aiMessageIndex === -1) {
+                          const newMessages = [...session.messages, {
+                            role: 'assistant',
+                            content: delta,
+                            timestamp: Date.now(),
+                            _isStreaming: true,
+                          }];
+                          
+                          await updateChatSession(sessionId, { 
+                            messages: newMessages,
+                            updatedAt: Date.now(),
+                          });
+                        } else {
+                          const updatedMessages = [...session.messages];
+                          updatedMessages[aiMessageIndex] = {
+                            ...updatedMessages[aiMessageIndex],
+                            content: updatedMessages[aiMessageIndex].content + delta,
+                          };
+                          
+                          await updateChatSession(sessionId, { 
+                            messages: updatedMessages,
+                            updatedAt: Date.now(),
+                          });
+                        }
+                      }
+                    }).catch(() => {});
+                  }
+                }
+              } catch (e) {
+                // 忽略解析错误
+              }
+            }
+          }
+          
+          return true;
+        },
+      };
+
       try {
-        await forwardStreamRequest(runtimeModel, body, res);
+        await forwardStreamRequest(runtimeModel, body, wrappedRes as any);
+        
+        // 流结束：移除 _isStreaming 标记
+        if (sessionId && streamingContent) {
+          try {
+            const session = await getChatSessionById(sessionId);
+            
+            if (session && session.ownerId === userId) {
+              const aiMessageIndex = session.messages.findIndex(
+                (m: any) => m.role === 'assistant' && m._isStreaming
+              );
+              
+              if (aiMessageIndex !== -1) {
+                const updatedMessages = [...session.messages];
+                const { _isStreaming, ...finalMessage } = updatedMessages[aiMessageIndex];
+                updatedMessages[aiMessageIndex] = finalMessage;
+                
+                await updateChatSession(sessionId, { 
+                  messages: updatedMessages,
+                  updatedAt: Date.now(),
+                });
+                
+                console.log(`[User Chat] Forward stream completed for session ${sessionId}`);
+              }
+            }
+          } catch (error) {
+            console.error('[User Chat] Failed to finalize forwarded stream:', error);
+          }
+        }
       } catch (error: any) {
         console.error('[User Chat] Stream forwarding failed:', error.message);
         if (!res.headersSent) {
@@ -449,6 +549,36 @@ async function handleUserChatRequest(
         }
       }
 
+      // 自动更新会话：添加AI回复
+      if (sessionId) {
+        try {
+          const session = await getChatSessionById(sessionId);
+          
+          if (session && session.ownerId === userId) {
+            // 从响应中提取AI消息
+            if (response.choices && response.choices[0]?.message) {
+              const aiMessage = response.choices[0].message;
+              const newMessages = [...session.messages, {
+                role: aiMessage.role,
+                content: typeof aiMessage.content === 'string' 
+                  ? aiMessage.content 
+                  : JSON.stringify(aiMessage.content),
+                timestamp: Date.now(),
+              }];
+              
+              await updateChatSession(sessionId, { 
+                messages: newMessages,
+                updatedAt: Date.now(),
+              });
+              
+              console.log(`[User Chat] Updated session ${sessionId} with AI response`);
+            }
+          }
+        } catch (error) {
+          console.error('[User Chat] Failed to update session with AI response:', error);
+        }
+      }
+
       return res.json(response);
     }
   }
@@ -471,17 +601,88 @@ async function handleUserChatRequest(
       createdAt: Date.now(),
       resolve: () => {},
       streamController: {
-        enqueue: (content: string) => {
+        enqueue: async (content: string) => {
           if (!streamEnded) {
             res.write(buildStreamChunk(requestId, body.model, content, false));
+            
+            // 实时更新会话：追加AI回复内容
+            if (sessionId) {
+              try {
+                const session = await getChatSessionById(sessionId);
+                
+                if (session && session.ownerId === userId) {
+                  // 查找或创建AI消息
+                  let aiMessageIndex = session.messages.findIndex(
+                    (m: any) => m.role === 'assistant' && m._isStreaming
+                  );
+                  
+                  if (aiMessageIndex === -1) {
+                    // 创建新的AI消息
+                    const newMessages = [...session.messages, {
+                      role: 'assistant',
+                      content: content,
+                      timestamp: Date.now(),
+                      _isStreaming: true, // 标记为正在生成
+                    }];
+                    
+                    await updateChatSession(sessionId, { 
+                      messages: newMessages,
+                      updatedAt: Date.now(),
+                    });
+                  } else {
+                    // 追加到现有AI消息
+                    const updatedMessages = [...session.messages];
+                    updatedMessages[aiMessageIndex] = {
+                      ...updatedMessages[aiMessageIndex],
+                      content: updatedMessages[aiMessageIndex].content + content,
+                    };
+                    
+                    await updateChatSession(sessionId, { 
+                      messages: updatedMessages,
+                      updatedAt: Date.now(),
+                    });
+                  }
+                }
+              } catch (error) {
+                console.error('[User Chat] Failed to update streaming content:', error);
+              }
+            }
           }
         },
-        close: () => {
+        close: async () => {
           if (!streamEnded) {
             streamEnded = true;
             res.write(buildStreamChunk(requestId, body.model, '', false, true));
             res.write(buildStreamDone());
             res.end();
+            
+            // 流结束：移除 _isStreaming 标记
+            if (sessionId) {
+              try {
+                const session = await getChatSessionById(sessionId);
+                
+                if (session && session.ownerId === userId) {
+                  const aiMessageIndex = session.messages.findIndex(
+                    (m: any) => m.role === 'assistant' && m._isStreaming
+                  );
+                  
+                  if (aiMessageIndex !== -1) {
+                    const updatedMessages = [...session.messages];
+                    const { _isStreaming, ...finalMessage } = updatedMessages[aiMessageIndex];
+                    updatedMessages[aiMessageIndex] = finalMessage;
+                    
+                    await updateChatSession(sessionId, { 
+                      messages: updatedMessages,
+                      updatedAt: Date.now(),
+                    });
+                    
+                    console.log(`[User Chat] Stream completed for session ${sessionId}`);
+                  }
+                }
+              } catch (error) {
+                console.error('[User Chat] Failed to finalize streaming message:', error);
+              }
+            }
           }
         }
       },
