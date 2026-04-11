@@ -57,7 +57,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     const sessionId = body.sessionId;
     if (sessionId) {
       try {
-        const { getChatSessionById, updateChatSession } = await import('../storage.js');
+        const { getChatSessionById, updateChatSession } = await import('../db/chatSessions.js');
         const session = await getChatSessionById(sessionId);
         
         if (session && session.userId === userId) {
@@ -322,7 +322,7 @@ async function handleUserChatRequest(
         // 自动更新会话：添加AI消息
         if (sessionId) {
           try {
-            const { getChatSessionById, updateChatSession } = await import('../storage.js');
+            const { getChatSessionById, updateChatSession } = await import('../db/chatSessions.js');
             const session = await getChatSessionById(sessionId);
             
             if (session && session.userId === userId) {
