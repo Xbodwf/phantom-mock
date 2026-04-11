@@ -320,10 +320,11 @@ export function AdminNavBar() {
           >
             <MenuIcon size={24} />
           </IconButton>
+          <Box sx={{ flexGrow: 1 }} />
           <Stack direction="row" spacing={1} alignItems="center">
             <LanguageSwitcher />
             <ThemeSwitcher />
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer', ml: 'auto' }} onClick={handleUserMenuOpen}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer' }} onClick={handleUserMenuOpen}>
               <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.main' }}>
                 {user?.username?.charAt(0)?.toUpperCase() || 'U'}
               </Avatar>
