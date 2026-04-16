@@ -4,10 +4,10 @@ import archiver from 'archiver';
 import unzipper from 'unzipper';
 import fs from 'fs';
 import path from 'path';
-import { db } from '../db/connection.js';
+import { getDB } from '../db/connection.js';
 import { backupMetadataCollection } from '../db/index.js';
 
-const router = Router();
+const router: Router = Router();
 
 // 备份元数据接口
 interface BackupMetadata {
@@ -38,6 +38,7 @@ router.post('/export', async (req: AuthRequest, res: Response) => {
     }
 
     const backupPath = path.join(backupDir, filename);
+    const db = getDB();
 
     // 创建压缩流
     const output = fs.createWriteStream(backupPath);
@@ -93,7 +94,7 @@ router.post('/export', async (req: AuthRequest, res: Response) => {
       version: '1.0.0',
       exportedAt: Date.now(),
       exportedBy: userId,
-      collections: collections.map(c => c.name).filter(n => !n.startsWith('system.') && n !== 'backup_metadata'),
+      collections: collections.map((c: any) => c.name).filter((n: string) => !n.startsWith('system.') && n !== 'backup_metadata'),
     };
     
     archive.append(JSON.stringify(metadata, null, 2), { name: 'metadata.json' });
@@ -101,7 +102,7 @@ router.post('/export', async (req: AuthRequest, res: Response) => {
     await archive.finalize();
 
     // 等待压缩完成
-    await new Promise(resolve => output.on('close', resolve));
+    await new Promise<void>(resolve => output.on('close', resolve));
 
     res.json({
       success: true,
@@ -196,13 +197,14 @@ router.post('/import', async (req: AuthRequest, res: Response) => {
     }
 
     const tempPath = req.file.path;
+    const db = getDB();
     
     // 解压并验证
     const extractDir = path.join(process.cwd(), 'temp-import', Date.now().toString());
     fs.mkdirSync(extractDir, { recursive: true });
 
     try {
-      await new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         fs.createReadStream(tempPath)
           .pipe(unzipper.Extract({ path: extractDir }))
           .on('close', resolve)
