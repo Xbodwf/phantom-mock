@@ -6,7 +6,6 @@ import type { Message } from './types.js';
 import { initWebSocket, getConnectedClientsCount, broadcastModelsUpdate } from './websocket.js';
 import { initReverseWebSocket, initNodeWebSocket, hasReverseClients, broadcastRequestToReverseClients } from './reverseWebSocket.js';
 import { createServer } from 'http';
-import multer from 'multer';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { formatEndpointsForConsole } from './apiEndpoints.js';
@@ -294,13 +293,7 @@ app.use('/api', authMiddleware, workflowRunRoutes);
 app.use('/api/admin', authMiddleware, adminMiddleware, adminRoutes);
 
 // ==================== 备份管理路由 ====================
-// 文件上传中间件配置
-const upload = multer({ dest: 'temp-uploads/' });
-
 app.use('/api/admin/backup', authMiddleware, adminMiddleware, backupRoutes);
-app.post('/api/admin/backup/import', authMiddleware, adminMiddleware, upload.single('backup'), (req, res, next) => {
-  backupRoutes(req as any, res, next);
-});
 
 // ==================== API Key 认证中间件 ====================
 

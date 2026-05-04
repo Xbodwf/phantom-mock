@@ -3,7 +3,7 @@ import { MongoClient, Db } from 'mongodb';
 let client: MongoClient | null = null;
 let db: Db | null = null;
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGODB_URL || process.env.MONGODB || 'mongodb://localhost:27017';
 const DB_NAME = process.env.DB_NAME || 'phantom_mock';
 
 export async function connectDB(): Promise<Db> {

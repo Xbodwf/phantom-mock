@@ -84,6 +84,33 @@ docker-compose logs -f
 - 应用服务：`http://localhost:7143`
 - MongoDB 服务：`localhost:27017`（可用于数据迁移、备份等）
 
+### 单独部署 MongoDB
+
+如果已有外部 MongoDB 实例，或需要单独部署 MongoDB，可使用以下命令：
+
+```bash
+# 使用 Docker 单独启动 MongoDB
+docker run -d \
+  --name phantom-mock-mongodb \
+  -p 27017:27017 \
+  -v mongodb_data:/data/db \
+  -e MONGO_INITDB_DATABASE=phantom_mock \
+  mongo:7
+
+# 查看日志
+docker logs -f phantom-mock-mongodb
+```
+
+然后在启动应用时通过环境变量指定 MongoDB 连接地址：
+
+```bash
+export MONGODB_URI=mongodb://localhost:27017/phantom_mock
+# 或
+export MONGODB_URL=mongodb://localhost:27017/phantom_mock
+# 或
+export MONGODB=mongodb://localhost:27017/phantom_mock
+```
+
 ### 方式三：通过镜像拉取
 
 ```bash
@@ -138,10 +165,16 @@ pnpm dev          # 后端开发模式
 pnpm dev:frontend # 前端开发模式
 
 # 生产构建
-pnpm build
+pnpm build:ssr
 
-# 启动生产服务
-pnpm start
+# 使用 PM2 启动生产服务
+pm2 start dist/index.js --name phantom-mock
+
+# PM2 其他常用命令
+pm2 logs phantom-mock      # 查看日志
+pm2 restart phantom-mock   # 重启服务
+pm2 stop phantom-mock      # 停止服务
+pm2 status                 # 查看所有进程状态
 ```
 
 #### 本地开发使用 MongoDB
@@ -150,15 +183,15 @@ pnpm start
 
 ```bash
 # Linux/macOS
-export MONGODB_URI=mongodb://localhost:27017/phantom-mock
+export MONGODB_URI=mongodb://localhost:27017/phantom_mock
 pnpm dev
 
 # Windows PowerShell
-$env:MONGODB_URI="mongodb://localhost:27017/phantom-mock"
+$env:MONGODB_URI="mongodb://localhost:27017/phantom_mock"
 pnpm dev
 
 # 或者创建 .env 文件
-echo "MONGODB_URI=mongodb://localhost:27017/phantom-mock" > .env
+echo "MONGODB_URI=mongodb://localhost:27017/phantom_mock" > .env
 pnpm dev
 ```
 
@@ -170,7 +203,7 @@ pnpm dev
 |--------|--------|------|
 | PORT | 7143 | 服务端口 |
 | NODE_ENV | production | 运行环境 |
-| MONGODB_URI | - | MongoDB 连接字符串（可选，不设置则使用 JSON 文件存储） |
+| MONGODB_URI | - | MongoDB 连接字符串（可选，也支持 MONGODB_URL 或 MONGODB） |
 
 ### 数据持久化
 

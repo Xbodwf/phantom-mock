@@ -4,7 +4,10 @@ import archiver from 'archiver';
 import unzipper from 'unzipper';
 import fs from 'fs';
 import path from 'path';
+import multer from 'multer';
 import { getDB } from '../db/connection.js';
+
+const upload = multer({ dest: 'temp-uploads/' });
 
 const router: Router = Router();
 
@@ -188,7 +191,7 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
 });
 
 // 导入数据
-router.post('/import', async (req: AuthRequest, res: Response) => {
+router.post('/import', upload.single('backup'), async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
     if (!userId) {
