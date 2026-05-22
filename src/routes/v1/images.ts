@@ -44,7 +44,7 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 // 辅助函数：从请求中提取 API Key
 function extractApiKey(req: Request): string | null {
@@ -204,9 +204,12 @@ router.post('/generations', async (req: Request, res: Response) => {
 });
 
 // POST /v1/images/edits - 图片编辑（支持 multipart 上传 + JSON 两种格式）
-router.post('/edits', upload.single('image'), async (req: Request, res: Response) => {
+router.post('/edits', upload.fields([
+  { name: 'image', maxCount: 5 },
+  { name: 'mask', maxCount: 1 },
+]), async (req: Request, res: Response) => {
   const body = req.body;
-  const file = req.file;
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
 
   if (!body.prompt) {
     return res.status(400).json({
@@ -225,14 +228,16 @@ router.post('/edits', upload.single('image'), async (req: Request, res: Response
   if (!model) return;
 
   const requestId = generateRequestId();
-  const isEdit = !!file || !!body.image;
+  const imageFiles = files?.image || [];
+  const maskFiles = files?.mask || [];
+  const isEdit = imageFiles.length > 0 || maskFiles.length > 0 || !!body.image;
 
-  let referenceImageUrl: string | undefined;
-
-  if (file) {
-    referenceImageUrl = `/static/uploads/${file.filename}`;
-  } else if (typeof body.image === 'string') {
-    referenceImageUrl = body.image;
+  const referenceImages: string[] = [];
+  for (const f of imageFiles) {
+    referenceImages.push(`/static/uploads/${f.filename}`);
+  }
+  for (const f of maskFiles) {
+    referenceImages.push(`/static/uploads/${f.filename}`);
   }
 
   console.log('\n========================================');
@@ -242,7 +247,7 @@ router.post('/edits', upload.single('image'), async (req: Request, res: Response
   console.log('提示词:', body.prompt.substring(0, 100));
   console.log('数量:', body.n || 1);
   console.log('尺寸:', body.size || '1024x1024');
-  if (referenceImageUrl) console.log('参考图:', referenceImageUrl);
+  if (referenceImages.length > 0) console.log('参考图数:', referenceImages.length);
   console.log('========================================\n');
 
   const imageRequest: ImageGenerationRequest = {
@@ -254,7 +259,7 @@ router.post('/edits', upload.single('image'), async (req: Request, res: Response
     style: body.style,
     response_format: body.response_format,
     user: body.user,
-    reference_image_url: referenceImageUrl,
+    reference_image_url: referenceImages[0],
   };
 
   const pending: PendingRequest = {
