@@ -60,7 +60,7 @@ function extractApiKey(req: Request): string | null {
 }
 
 // 辅助函数：提取并校验 API Key，返回 keyObj 或发送响应并 return false
-async function authenticateRequest(req: Request, res: Response): Promise<object | false> {
+async function authenticateRequest(req: Request, res: Response): Promise<object | false | null> {
   const apiKeyStr = extractApiKey(req);
   if (apiKeyStr) {
     const apiKeyObj = await validateApiKey(apiKeyStr);
