@@ -204,12 +204,9 @@ router.post('/generations', async (req: Request, res: Response) => {
 });
 
 // POST /v1/images/edits - 图片编辑（支持 multipart 上传 + JSON 两种格式）
-router.post('/edits', upload.fields([
-  { name: 'image', maxCount: 5 },
-  { name: 'mask', maxCount: 1 },
-]), async (req: Request, res: Response) => {
+router.post('/edits', upload.any(), async (req: Request, res: Response) => {
   const body = req.body;
-  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+  const files = req.files as Express.Multer.File[] | undefined;
 
   if (!body.prompt) {
     return res.status(400).json({
@@ -228,16 +225,13 @@ router.post('/edits', upload.fields([
   if (!model) return;
 
   const requestId = generateRequestId();
-  const imageFiles = files?.image || [];
-  const maskFiles = files?.mask || [];
-  const isEdit = imageFiles.length > 0 || maskFiles.length > 0 || !!body.image;
+  const isEdit = (files && files.length > 0) || !!body.image;
 
   const referenceImages: string[] = [];
-  for (const f of imageFiles) {
-    referenceImages.push(`/static/uploads/${f.filename}`);
-  }
-  for (const f of maskFiles) {
-    referenceImages.push(`/static/uploads/${f.filename}`);
+  if (files) {
+    for (const f of files) {
+      referenceImages.push(`/static/uploads/${f.filename}`);
+    }
   }
 
   console.log('\n========================================');
