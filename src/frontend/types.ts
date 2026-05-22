@@ -192,6 +192,7 @@ export interface ImageGenerationRequest {
   style?: 'vivid' | 'natural';
   response_format?: 'url' | 'b64_json';
   user?: string;
+  reference_image_url?: string;
 }
 
 // 视频生成请求

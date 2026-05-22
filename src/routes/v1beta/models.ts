@@ -41,12 +41,12 @@ function isModelSupportedByEndpoint(model: Model | null, endpoint: string): bool
   const modelType = model.type;
 
   switch (endpoint) {
-    // 文本输出端点：支持 text, embedding, rerank, responses
+    // 文本输出端点：支持 text, embedding, rerank, responses, image
     case 'chat':
     case 'messages':
     case 'generateContent':
     case 'streamGenerateContent':
-      return ['text', 'embedding', 'rerank', 'responses'].includes(modelType);
+      return ['text', 'embedding', 'rerank', 'responses', 'image'].includes(modelType);
 
     // 嵌入端点：仅支持 embedding
     case 'embeddings':
@@ -199,6 +199,97 @@ async function handleGeminiRequest(
   }
 
   const requestId = generateRequestId();
+
+  // ==================== 图片模型处理 ====================
+  if (model.type === 'image') {
+    // 从 Gemini 内容中提取 prompt
+    let prompt = '';
+    if (body.contents && Array.isArray(body.contents)) {
+      for (const item of body.contents) {
+        if (item.parts) {
+          for (const part of item.parts) {
+            if ((part as any).text) prompt += (part as any).text;
+          }
+        }
+      }
+    }
+    if (!prompt) {
+      return res.status(400).json({
+        error: { code: 400, message: 'No prompt text provided for image generation', status: 'BAD_REQUEST' }
+      });
+    }
+
+    console.log('\n========================================');
+    console.log('收到新的图片生成请求 [Google Gemini]');
+    console.log('请求ID:', requestId);
+    console.log('模型:', modelId);
+    console.log('提示词:', prompt.substring(0, 100));
+    console.log('========================================\n');
+
+    const pending: PendingRequest = {
+      requestId,
+      request: { model: modelId, messages: [] },
+      isStream: false,
+      createdAt: Date.now(),
+      resolve: () => {},
+      requestType: 'image',
+      imageRequest: {
+        model: modelId,
+        prompt,
+        n: 1,
+        size: '1024x1024',
+      },
+    };
+
+    const responsePromise = new Promise<Array<{ url?: string; b64_json?: string }>>((resolve) => {
+      pending.resolve = (data: string) => {
+        try {
+          resolve(JSON.parse(data));
+        } catch {
+          resolve([]);
+        }
+      };
+    });
+
+    addPendingRequest(pending);
+    broadcastRequest(pending);
+
+    const timeout = setTimeout(() => {
+      removePendingRequest(requestId);
+      return res.json({
+        candidates: [{
+          content: { parts: [{ text: 'https://placeholder.com/timeout.png' }], role: 'model' },
+          finishReason: 'STOP',
+          safetyRatings: []
+        }],
+        modelVersion: modelId,
+      });
+    }, 10 * 60 * 1000);
+
+    try {
+      const images = await responsePromise;
+      clearTimeout(timeout);
+
+      const parts = images.map(img => {
+        const url = img.url || (img.b64_json ? `data:image/png;base64,${img.b64_json}` : '');
+        return { text: `![generated image](${url})` };
+      });
+
+      return res.json({
+        candidates: [{
+          content: { parts, role: 'model' },
+          finishReason: 'STOP',
+          safetyRatings: []
+        }],
+        modelVersion: modelId,
+      });
+    } catch {
+      clearTimeout(timeout);
+      return res.status(500).json({
+        error: { code: 500, message: 'Internal server error', status: 'INTERNAL' }
+      });
+    }
+  }
 
   // 转换 Gemini 格式到 OpenAI 格式
   const messages: ChatCompletionRequest['messages'] = [];

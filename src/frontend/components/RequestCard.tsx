@@ -353,6 +353,19 @@ function ImageRequestCard({
           {imageRequest.style && <Chip size="small" label={`风格: ${imageRequest.style}`} />}
           {imageRequest.n && <Chip size="small" label={`数量: ${imageRequest.n}`} />}
         </Stack>
+        {imageRequest.reference_image_url && (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+              参考图:
+            </Typography>
+            <Box
+              component="img"
+              src={imageRequest.reference_image_url}
+              alt="reference"
+              sx={{ maxWidth: '100%', maxHeight: 300, borderRadius: 1, border: '1px solid', borderColor: 'divider' }}
+            />
+          </Box>
+        )}
       </Paper>
 
       <Divider sx={{ my: 2 }} />
