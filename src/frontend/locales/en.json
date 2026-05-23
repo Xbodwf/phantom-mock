@@ -223,6 +223,7 @@
       "pricing": "Pricing",
       "input": "Input",
       "output": "Output",
+      "cacheRead": "Input (Cache Hit)",
       "tokens": "tokens",
       "features": "Features",
       "contextLength": "Context Length"

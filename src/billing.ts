@@ -80,7 +80,8 @@ export function estimateTokens(text: string): number {
 export function calculateCost(
   promptTokens: number,
   completionTokens: number,
-  model: Model
+  model: Model,
+  cacheHitTokens: number = 0
 ): number {
   if (!model.pricing) {
     return 0;
@@ -89,16 +90,13 @@ export function calculateCost(
   const pricingType = model.pricing.type || 'token';
 
   if (pricingType === 'request') {
-    // 按请求计费
     return model.pricing.perRequest || 0;
   }
 
   if (pricingType === 'tiered' && model.pricing.tieredPricing) {
-    // 阶梯计费
     const tieredPricing = model.pricing.tieredPricing;
     let baseTokens: number;
 
-    // 根据配置确定计算基数
     switch (tieredPricing.baseOn) {
       case 'input':
         baseTokens = promptTokens;
@@ -112,9 +110,8 @@ export function calculateCost(
         break;
     }
 
-    // 找到对应的阶梯
     const tiers = tieredPricing.tiers.sort((a, b) => a.min - b.min);
-    let matchedTier = tiers[0]; // 默认使用第一个阶梯
+    let matchedTier = tiers[0];
 
     for (const tier of tiers) {
       if (baseTokens >= tier.min && (tier.max === null || baseTokens <= tier.max)) {
@@ -123,19 +120,20 @@ export function calculateCost(
       }
     }
 
-    // 计算总费用：总token数 * (每K tokens价格 / 1000)
     const totalTokens = promptTokens + completionTokens;
     return (totalTokens * (matchedTier.pricePerToken || 0)) / 1000;
   }
 
-  // 按 token 计费（默认）
   const unit = model.pricing.unit || 'K';
   const divisor = unit === 'M' ? 1000000 : 1000;
 
-  const inputCost = (promptTokens * (model.pricing.input || 0)) / divisor;
+  // 区分缓存未命中（input）和缓存命中（cacheRead）的 prompt 费用
+  const cacheMissTokens = promptTokens - cacheHitTokens;
+  const cacheMissCost = (cacheMissTokens * (model.pricing.input || 0)) / divisor;
+  const cacheHitCost = (cacheHitTokens * (model.pricing.cacheRead ?? model.pricing.input ?? 0)) / divisor;
   const outputCost = (completionTokens * (model.pricing.output || 0)) / divisor;
 
-  return inputCost + outputCost;
+  return cacheMissCost + cacheHitCost + outputCost;
 }
 
 /**

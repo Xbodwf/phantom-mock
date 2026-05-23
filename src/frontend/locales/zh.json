@@ -236,6 +236,7 @@
       "pricing": "定价",
       "input": "输入",
       "output": "输出",
+      "cacheRead": "输入(缓存命中)",
       "tokens": "tokens",
       "features": "功能",
       "contextLength": "上下文长度"

@@ -1,11 +1,10 @@
 /**
  * 格式化虚拟货币显示
  * @param amount 金额
- * @param decimals 小数位数
  * @returns 格式化后的货币字符串
  */
-export function formatCurrency(amount: number, decimals: number = 4): string {
-  return `🔮${amount.toFixed(decimals)}`;
+export function formatCurrency(amount: number): string {
+  return `🔮${rawDecimal(amount)}`;
 }
 
 /**
@@ -14,5 +13,12 @@ export function formatCurrency(amount: number, decimals: number = 4): string {
  * @returns 格式化后的货币字符串
  */
 export function formatCurrencyShort(amount: number): string {
-  return `🔮${amount.toFixed(2)}`;
+  return `🔮${rawDecimal(amount)}`;
+}
+
+/** 保留完整小数位，仅去掉尾部多余的零 */
+function rawDecimal(n: number): string {
+  const s = n.toFixed(10);
+  const trimmed = s.replace(/\.?0+$/, '');
+  return trimmed.length > 1 ? trimmed : '0';
 }

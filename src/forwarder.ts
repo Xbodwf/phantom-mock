@@ -224,49 +224,51 @@ export function resolveForwardUrl(
  throw new Error('Model not configured for forwarding: missing api_key');
  }
 
- // 优先使用 api_url_path
- const api_url_path = model.api_url_path;
- const baseUrl = normalizeBaseUrl(effectiveBaseUrl || '');
+  // 根据 endpoint 选择路径字段
+  const api_url_path = (endpoint === 'imageEdits' || endpoint === 'geminiStreamGenerateContent')
+  ? (model.api_url_path_2 || model.api_url_path)
+  : model.api_url_path;
+  const baseUrl = normalizeBaseUrl(effectiveBaseUrl || '');
 
- // 如果有 api_url_path，直接拼接
- if (api_url_path && api_url_path.trim()) {
- const trimmedPath = api_url_path.trim();
- const normalizedPath = trimmedPath.startsWith('/') ? trimmedPath : `/${trimmedPath}`;
- return `${baseUrl}${normalizedPath}`;
- }
+  // 如果有 api_url_path，直接拼接
+  if (api_url_path && api_url_path.trim()) {
+  const trimmedPath = api_url_path.trim();
+  const normalizedPath = trimmedPath.startsWith('/') ? trimmedPath : `/${trimmedPath}`;
+  return `${baseUrl}${normalizedPath}`;
+  }
 
- if (!baseUrl) {
- throw new Error(`Model not configured for forwarding endpoint: ${endpoint}`);
- }
+  if (!baseUrl) {
+  throw new Error(`Model not configured for forwarding endpoint: ${endpoint}`);
+  }
 
- switch (endpoint) {
- case 'chat':
- return baseUrl.includes('/chat/completions')
- ? baseUrl
- : appendPath(baseUrl, '/chat/completions');
- case 'embeddings':
- return baseUrl.includes('/embeddings')
- ? baseUrl
- : appendPath(baseUrl, '/embeddings');
- case 'rerank':
- return baseUrl.includes('/rerank')
- ? baseUrl
- : appendPath(baseUrl, '/rerank');
- case 'anthropicMessages':
- // 检查是否已包含/messages或/v1/messages
- if (baseUrl.includes('/messages')) {
- return baseUrl;
- }
- // 如果baseUrl已包含/v1，直接添加/messages，否则添加/v1/messages
- if (baseUrl.includes('/v1')) {
- return appendPath(baseUrl, '/messages');
- } else {
- return appendPath(baseUrl, '/v1/messages');
- }
- case 'geminiGenerateContent':
- return `${baseUrl}/v1beta/models/${encodeURIComponent(forwardModel)}:generateContent?key=${encodeURIComponent(effectiveApiKey)}`;
- case 'geminiStreamGenerateContent':
- return `${baseUrl}/v1beta/models/${encodeURIComponent(forwardModel)}:streamGenerateContent?key=${encodeURIComponent(effectiveApiKey)}&alt=sse`;
+  switch (endpoint) {
+  case 'chat':
+  return baseUrl.includes('/chat/completions')
+  ? baseUrl
+  : appendPath(baseUrl, '/chat/completions');
+  case 'embeddings':
+  return baseUrl.includes('/embeddings')
+  ? baseUrl
+  : appendPath(baseUrl, '/embeddings');
+  case 'rerank':
+  return baseUrl.includes('/rerank')
+  ? baseUrl
+  : appendPath(baseUrl, '/rerank');
+  case 'anthropicMessages':
+  // 检查是否已包含/messages或/v1/messages
+  if (baseUrl.includes('/messages')) {
+  return baseUrl;
+  }
+  // 如果baseUrl已包含/v1，直接添加/messages，否则添加/v1/messages
+  if (baseUrl.includes('/v1')) {
+  return appendPath(baseUrl, '/messages');
+  } else {
+  return appendPath(baseUrl, '/v1/messages');
+  }
+  case 'geminiGenerateContent':
+  return `${baseUrl}/v1beta/models/${encodeURIComponent(forwardModel)}:generateContent?key=${encodeURIComponent(effectiveApiKey)}`;
+  case 'geminiStreamGenerateContent':
+  return `${baseUrl}/v1beta/models/${encodeURIComponent(forwardModel)}:streamGenerateContent?key=${encodeURIComponent(effectiveApiKey)}&alt=sse`;
   case 'geminiEmbedContent':
   return `${baseUrl}/v1beta/models/${encodeURIComponent(forwardModel)}:embedContent?key=${encodeURIComponent(effectiveApiKey)}`;
   case 'imageGenerations':

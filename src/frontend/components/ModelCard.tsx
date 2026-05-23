@@ -195,6 +195,11 @@ export function ModelCard({ model, onSelect, onPreview }: ModelCardProps) {
                   {t('models.details.output')}: {formatPrice(model.pricing.output, model.pricing.unit)}
                 </Typography>
               )}
+              {model.pricing?.cacheRead ? (
+                <Typography variant="caption">
+                  {t('models.details.cacheRead')}: {formatPrice(model.pricing.cacheRead, model.pricing.unit)}
+                </Typography>
+              ) : null}
             </>
           )}
         </Stack>

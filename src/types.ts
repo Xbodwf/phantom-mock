@@ -186,6 +186,7 @@ export interface Model {
   api_base_url?: string; // API基础URL（用于转发）
   api_type?: 'openai' | 'anthropic' | 'google' | 'azure' | 'custom'; // API接口类型（用于转发）
   api_url_path?: string; // 相对路径，如 /v1/chat/completions
+  api_url_path_2?: string; // 第二相对路径：图片编辑(openai) / 流式转发(gemini)
   api_url_templates?: ApiUrlTemplates; // 按 endpoint 自定义完整转发 URL 模板（已废弃，使用 api_url_path）
   forwardModelName?: string; // 转发时使用的模型名称（不同平台模型名称可能不同）
   defaultHeaders?: Record<string, string>; // 转发请求时的默认请求头（如 thinking_mode 等），运行时请求头优先级更高

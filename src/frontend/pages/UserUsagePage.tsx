@@ -20,6 +20,16 @@ import {
   MenuItem,
   Stack,
 } from '@mui/material';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import api from '../utils/api';
@@ -43,7 +53,8 @@ interface UsageRecord {
 interface DailyUsage {
   date: string;
   requests: number;
-  tokens: number;
+  inputTokens: number;
+  outputTokens: number;
   cost: number;
 }
 
@@ -54,8 +65,7 @@ export function UserUsagePage() {
   const [records, setRecords] = useState<UsageRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  
-  // 筛选条件
+
   const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d' | 'all'>('30d');
   const [selectedModel, setSelectedModel] = useState<string>('all');
   const [selectedEndpoint, setSelectedEndpoint] = useState<string>('all');
@@ -79,11 +89,9 @@ export function UserUsagePage() {
     }
   };
 
-  // 获取所有唯一模型和端点
   const allModels = [...new Set(records.map(r => r.model))];
   const allEndpoints = [...new Set(records.map(r => r.endpoint))];
 
-  // 根据时间范围筛选
   const getTimeRangeStart = () => {
     const now = Date.now();
     switch (timeRange) {
@@ -94,7 +102,6 @@ export function UserUsagePage() {
     }
   };
 
-  // 应用筛选
   const filteredRecords = records.filter(record => {
     const timeStart = getTimeRangeStart();
     if (timeRange !== 'all' && record.timestamp < timeStart) return false;
@@ -103,34 +110,35 @@ export function UserUsagePage() {
     return true;
   });
 
-  // 按日期分组统计
   const dailyUsageMap = new Map<string, DailyUsage>();
   filteredRecords.forEach(record => {
     const date = getDatePart(record.timestamp);
-    const existing = dailyUsageMap.get(date) || { date, requests: 0, tokens: 0, cost: 0 };
+    const existing = dailyUsageMap.get(date) || { date, requests: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
     existing.requests += 1;
-    existing.tokens += record.totalTokens;
+    existing.inputTokens += record.promptTokens;
+    existing.outputTokens += record.completionTokens;
     existing.cost += record.cost;
     dailyUsageMap.set(date, existing);
   });
 
   const dailyUsage = Array.from(dailyUsageMap.values()).sort((a, b) => b.date.localeCompare(a.date));
+  const dailyCharts = Array.from(dailyUsageMap.values()).sort((a, b) => a.date.localeCompare(b.date));
 
-  // 计算汇总
   const summary = {
     totalRequests: filteredRecords.length,
-    totalTokens: filteredRecords.reduce((sum, r) => sum + r.totalTokens, 0),
+    totalInputTokens: filteredRecords.reduce((sum, r) => sum + r.promptTokens, 0),
+    totalOutputTokens: filteredRecords.reduce((sum, r) => sum + r.completionTokens, 0),
     totalCost: filteredRecords.reduce((sum, r) => sum + r.cost, 0),
   };
 
-  // 按模型统计（筛选后）
-  const byModel: Record<string, { requests: number; tokens: number; cost: number }> = {};
+  const byModel: Record<string, { requests: number; inputTokens: number; outputTokens: number; cost: number }> = {};
   filteredRecords.forEach(record => {
     if (!byModel[record.model]) {
-      byModel[record.model] = { requests: 0, tokens: 0, cost: 0 };
+      byModel[record.model] = { requests: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
     }
     byModel[record.model].requests += 1;
-    byModel[record.model].tokens += record.totalTokens;
+    byModel[record.model].inputTokens += record.promptTokens;
+    byModel[record.model].outputTokens += record.completionTokens;
     byModel[record.model].cost += record.cost;
   });
 
@@ -146,6 +154,44 @@ export function UserUsagePage() {
   if (loading) {
     return <LoadingSpinner />;
   }
+
+  const showCharts = timeRange !== 'all' && dailyCharts.length > 0;
+
+  const chartData = dailyCharts.map(d => ({
+    label: formatDateDisplay(d.date),
+    requests: d.requests,
+    input: d.inputTokens,
+    output: d.outputTokens,
+    total: d.inputTokens + d.outputTokens,
+  }));
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <Box sx={{ bgcolor: 'background.paper', p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1, boxShadow: 3 }}>
+        <Typography variant="caption" sx={{ fontWeight: 600, mb: 0.5, display: 'block' }}>{label}</Typography>
+        {payload.map((entry: any, i: number) => (
+          <Typography key={i} variant="caption" sx={{ display: 'block', color: entry.color }}>
+            {entry.name}: {entry.value.toLocaleString()}
+          </Typography>
+        ))}
+      </Box>
+    );
+  };
+
+  const TokenTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <Box sx={{ bgcolor: 'background.paper', p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1, boxShadow: 3 }}>
+        <Typography variant="caption" sx={{ fontWeight: 600, mb: 0.5, display: 'block' }}>{label}</Typography>
+        {payload.map((entry: any, i: number) => (
+          <Typography key={i} variant="caption" sx={{ display: 'block', color: entry.color }}>
+            {entry.name}: {entry.value.toLocaleString()}
+          </Typography>
+        ))}
+      </Box>
+    );
+  };
 
   return (
     <Container maxWidth="lg" sx={{ px: { xs: 1, sm: 2, md: 3 }, py: 4 }}>
@@ -164,7 +210,6 @@ export function UserUsagePage() {
         </Alert>
       )}
 
-      {/* 筛选器 */}
       <Card sx={{ mb: 4 }}>
         <CardContent>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
@@ -215,8 +260,7 @@ export function UserUsagePage() {
         </CardContent>
       </Card>
 
-      {/* 总体统计 */}
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: 'repeat(3, 1fr)' }, gap: 3, mb: 4 }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' }, gap: 2, mb: 4 }}>
         <Card>
           <CardContent>
             <Typography color="textSecondary" gutterBottom>
@@ -231,10 +275,21 @@ export function UserUsagePage() {
         <Card>
           <CardContent>
             <Typography color="textSecondary" gutterBottom>
-              {t('usage.totalTokens')}
+              {t('usage.promptTokens', '输入 Tokens')}
             </Typography>
             <Typography variant="h5" sx={{ fontWeight: 600 }}>
-              {summary.totalTokens.toLocaleString()}
+              {summary.totalInputTokens.toLocaleString()}
+            </Typography>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent>
+            <Typography color="textSecondary" gutterBottom>
+              {t('usage.completionTokens', '输出 Tokens')}
+            </Typography>
+            <Typography variant="h5" sx={{ fontWeight: 600 }}>
+              {summary.totalOutputTokens.toLocaleString()}
             </Typography>
           </CardContent>
         </Card>
@@ -251,44 +306,46 @@ export function UserUsagePage() {
         </Card>
       </Box>
 
-      {/* 按日期统计 */}
-      <Card sx={{ mb: 4 }}>
-        <CardContent>
-          <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
-            {t('usage.usageByDate')}
-          </Typography>
-          {dailyUsage.length > 0 ? (
-            <TableContainer sx={{ overflowX: 'auto' }}>
-              <Table sx={{}}>
-                <TableHead>
-                  <TableRow sx={{ backgroundColor: 'action.hover' }}>
-                    <TableCell sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" }, padding: { xs: "8px 4px", sm: "16px" } }}>{t('usage.date')}</TableCell>
-                    <TableCell align="right">{t('usage.requests')}</TableCell>
-                    <TableCell align="right">{t('usage.tokens')}</TableCell>
-                    <TableCell align="right">{t('usage.cost')}</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {dailyUsage.map((day) => (
-                    <TableRow key={day.date}>
-                      <TableCell sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" }, padding: { xs: "8px 4px", sm: "16px" } }}>{formatDateDisplay(day.date)}</TableCell>
-                      <TableCell align="right">{day.requests.toLocaleString()}</TableCell>
-                      <TableCell align="right">{day.tokens.toLocaleString()}</TableCell>
-                      <TableCell align="right">{formatCurrency(day.cost)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          ) : (
-            <Typography sx={{ color: 'text.secondary', textAlign: 'center', py: 4 }}>
-              {t('usage.noUsageData')}
-            </Typography>
-          )}
-        </CardContent>
-      </Card>
+      {showCharts && (
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 3, mb: 4 }}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
+                {t('usage.requestsTrend', '请求频率')}
+              </Typography>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#888' }} />
+                  <YAxis tick={{ fontSize: 11, fill: '#888' }} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Bar dataKey="requests" fill="#667eea" radius={[4, 4, 0, 0]} name={t('usage.requests', '请求数')} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
 
-      {/* 按模型统计 */}
+          <Card>
+            <CardContent>
+              <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
+                {t('usage.tokensTrend', 'Token 用量')}
+              </Typography>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#888' }} />
+                  <YAxis tick={{ fontSize: 11, fill: '#888' }} />
+                  <Tooltip content={<TokenTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="input" stackId="tokens" fill="#667eea" radius={[0, 0, 0, 0]} name={t('usage.promptTokens', '输入')} />
+                  <Bar dataKey="output" stackId="tokens" fill="#764ba2" radius={[4, 4, 0, 0]} name={t('usage.completionTokens', '输出')} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </Box>
+      )}
+
       <Card sx={{ mb: 4 }}>
         <CardContent>
           <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
@@ -301,7 +358,8 @@ export function UserUsagePage() {
                   <TableRow sx={{ backgroundColor: 'action.hover' }}>
                     <TableCell sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" }, padding: { xs: "8px 4px", sm: "16px" } }}>{t('usage.model')}</TableCell>
                     <TableCell align="right">{t('usage.requests')}</TableCell>
-                    <TableCell align="right">{t('usage.tokens')}</TableCell>
+                    <TableCell align="right">{t('usage.promptTokens', '输入')}</TableCell>
+                    <TableCell align="right">{t('usage.completionTokens', '输出')}</TableCell>
                     <TableCell align="right">{t('usage.cost')}</TableCell>
                   </TableRow>
                 </TableHead>
@@ -310,7 +368,8 @@ export function UserUsagePage() {
                     <TableRow key={model}>
                       <TableCell sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" }, padding: { xs: "8px 4px", sm: "16px" } }}>{model}</TableCell>
                       <TableCell align="right">{data.requests.toLocaleString()}</TableCell>
-                      <TableCell align="right">{data.tokens.toLocaleString()}</TableCell>
+                      <TableCell align="right">{data.inputTokens.toLocaleString()}</TableCell>
+                      <TableCell align="right">{data.outputTokens.toLocaleString()}</TableCell>
                       <TableCell align="right">{formatCurrency(data.cost)}</TableCell>
                     </TableRow>
                   ))}
@@ -323,7 +382,6 @@ export function UserUsagePage() {
         </CardContent>
       </Card>
 
-      {/* 详细记录 */}
       <Card>
         <CardContent>
           <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
@@ -337,7 +395,8 @@ export function UserUsagePage() {
                     <TableCell sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" }, padding: { xs: "8px 4px", sm: "16px" } }}>{t('usage.time')}</TableCell>
                     <TableCell sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" }, padding: { xs: "8px 4px", sm: "16px" } }}>{t('usage.model')}</TableCell>
                     <TableCell sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" }, padding: { xs: "8px 4px", sm: "16px" } }}>{t('usage.endpoint')}</TableCell>
-                    <TableCell align="right">{t('usage.tokens')}</TableCell>
+                    <TableCell align="right">{t('usage.promptTokens', '输入')}</TableCell>
+                    <TableCell align="right">{t('usage.completionTokens', '输出')}</TableCell>
                     <TableCell align="right">{t('usage.cost')}</TableCell>
                   </TableRow>
                 </TableHead>
@@ -349,7 +408,8 @@ export function UserUsagePage() {
                       </TableCell>
                       <TableCell sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" }, padding: { xs: "8px 4px", sm: "16px" } }}>{record.model}</TableCell>
                       <TableCell sx={{ textTransform: 'capitalize' }}>{record.endpoint}</TableCell>
-                      <TableCell align="right">{record.totalTokens.toLocaleString()}</TableCell>
+                      <TableCell align="right">{record.promptTokens.toLocaleString()}</TableCell>
+                      <TableCell align="right">{record.completionTokens.toLocaleString()}</TableCell>
                       <TableCell align="right">{formatCurrency(record.cost)}</TableCell>
                     </TableRow>
                   ))}

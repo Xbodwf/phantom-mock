@@ -145,6 +145,7 @@ export interface Model {
   nodeId?: string;                // 关联节点ID
   api_type?: 'openai' | 'anthropic' | 'google' | 'azure' | 'custom';
   api_url_path?: string;          // 相对路径，如 /v1/chat/completions
+  api_url_path_2?: string;        // 第二相对路径：图片编辑(openai) / 流式转发(gemini)
   api_url_templates?: ApiUrlTemplates;
   forwardModelName?: string;      // 转发时使用的模型名称
   supported_features?: string[];

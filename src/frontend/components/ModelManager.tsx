@@ -171,6 +171,7 @@ interface FormData {
   providerId: string;
   nodeId: string;
   api_url_path: string;           // 相对路径
+  api_url_path_2: string;         // 第二相对路径：图片编辑(openai) / 流式转发(gemini)
   api_type: ApiType;
   forwardModelName: string;       // 转发时使用的模型名称
   api_url_templates: {
@@ -211,6 +212,7 @@ const defaultFormData: FormData = {
   providerId: '',
   nodeId: '',
   api_url_path: '',
+  api_url_path_2: '',
   api_type: 'openai',
   forwardModelName: '',
   api_url_templates: {
@@ -372,6 +374,7 @@ export default function ModelManager() {
         providerId: model.providerId || '',
         nodeId: model.nodeId || '',
         api_url_path,
+        api_url_path_2: model.api_url_path_2 || '',
         api_type: model.api_type || 'openai',
         forwardModelName: model.forwardModelName || '',
         api_url_templates: {
@@ -420,7 +423,7 @@ export default function ModelManager() {
       context_length: formData.context_length,
       aliases: formData.aliases ? formData.aliases.split(',').map(s => s.trim()).filter(Boolean) : undefined,
       max_output_tokens: formData.max_output_tokens,
-      pricing: (formData.pricing_type === 'token' && (formData.pricing_input > 0 || formData.pricing_output > 0)) ||
+      pricing: (formData.pricing_type === 'token' && (formData.pricing_input > 0 || formData.pricing_output > 0 || formData.pricing_cache_read > 0)) ||
                (formData.pricing_type === 'request' && formData.pricing_per_request > 0) ||
                (formData.pricing_type === 'tiered' && formData.tiered_tiers.length > 0) ? {
         type: formData.pricing_type,
@@ -440,6 +443,7 @@ export default function ModelManager() {
       api_type: formData.api_type || undefined,
       forwardModelName: formData.forwardModelName || undefined,
       api_url_path: formData.api_url_path.trim() || undefined,
+      api_url_path_2: formData.api_url_path_2.trim() || undefined,
       supported_features: formData.supported_features ? formData.supported_features.split(',').map(s => s.trim()).filter(Boolean) : undefined,
       icon: formData.icon || undefined,
       allowManualReply: formData.allowManualReply,
@@ -773,6 +777,14 @@ export default function ModelManager() {
                       inputProps={{ min: 0, step: 0.0001 }}
                     />
                     <TextField
+                      label={t('models.manager.cacheReadPrice', '输入(缓存命中)')}
+                      type="number"
+                      value={formData.pricing_cache_read}
+                      onChange={(e) => setFormData({ ...formData, pricing_cache_read: parseFloat(e.target.value) || 0 })}
+                      size="small"
+                      inputProps={{ min: 0, step: 0.0001 }}
+                    />
+                    <TextField
                       label={t('models.manager.outputPrice')}
                       type="number"
                       value={formData.pricing_output}
@@ -991,7 +1003,20 @@ export default function ModelManager() {
                     onChange={(e) => setFormData({ ...formData, api_url_path: e.target.value })}
                     placeholder="/v1/chat/completions"
                     size="small"
-                    helperText={t('models.manager.apiUrlPathHelper', '相对于提供商/节点配置的 Base URL')}
+                    helperText={t('models.manager.apiUrlPathHelper', '生图/普通转发；留空则自动拼接')}
+                  />
+                )}
+
+                {/* 第二相对路径：图片编辑(openai) / 流式转发(gemini) */}
+                {(formData.forwardingMode === 'provider' || formData.forwardingMode === 'node') && (
+                  <TextField
+                    label={t('models.manager.apiUrlPath2', 'API 相对路径 2')}
+                    fullWidth
+                    value={formData.api_url_path_2}
+                    onChange={(e) => setFormData({ ...formData, api_url_path_2: e.target.value })}
+                    placeholder="/v1/images/edits"
+                    size="small"
+                    helperText={t('models.manager.apiUrlPath2Helper', '图片编辑(openai)/流式转发(gemini)；留空则使用路径1')}
                   />
                 )}
 

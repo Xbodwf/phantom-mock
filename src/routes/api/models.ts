@@ -34,6 +34,7 @@ router.post('/', adminMiddleware, async (req: Request, res: Response) => {
     pricing,
     api_type,
     api_url_path,
+    api_url_path_2,
     api_url_templates,
     forwardModelName,
     supported_features,
@@ -47,7 +48,7 @@ router.post('/', adminMiddleware, async (req: Request, res: Response) => {
     commissionRatio,
   } = req.body;
 
-  console.log('[Model API] POST /api/models - api_url_path:', api_url_path);
+  console.log('[Model API] POST /api/models - api_url_path:', api_url_path, 'api_url_path_2:', api_url_path_2);
 
   if (!id) {
     return res.status(400).json({ error: 'Model ID is required' });
@@ -72,6 +73,7 @@ router.post('/', adminMiddleware, async (req: Request, res: Response) => {
       pricing,
       api_type,
       api_url_path,
+      api_url_path_2,
       api_url_templates,
       forwardModelName,
       supported_features,
@@ -105,6 +107,7 @@ router.put('/:id(*)', adminMiddleware, async (req: Request, res: Response) => {
     pricing,
     api_type,
     api_url_path,
+    api_url_path_2,
     api_url_templates,
     forwardModelName,
     supported_features,
@@ -123,7 +126,7 @@ router.put('/:id(*)', adminMiddleware, async (req: Request, res: Response) => {
     commissionRatio,
   } = req.body;
 
-  console.log('[Model API] PUT /api/models/' + id + ' - api_url_path:', api_url_path);
+  console.log('[Model API] PUT /api/models/' + id + ' - api_url_path:', api_url_path, 'api_url_path_2:', api_url_path_2);
 
   try {
     // 如果要修改ID，先检查新ID是否已存在
@@ -143,6 +146,7 @@ router.put('/:id(*)', adminMiddleware, async (req: Request, res: Response) => {
       pricing,
       api_type,
       api_url_path,
+      api_url_path_2,
       api_url_templates,
       forwardModelName,
       supported_features,

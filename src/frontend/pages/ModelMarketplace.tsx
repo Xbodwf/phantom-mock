@@ -277,6 +277,11 @@ export function ModelMarketplace({ models, onSelectModel }: ModelMarketplaceProp
                                 {t('models.details.output')}: {formatCurrency(selectedModel.pricing.output)}/{selectedModel.pricing.unit || 'K'} {t('models.details.tokens')}
                               </Typography>
                             )}
+                            {selectedModel.pricing.cacheRead ? (
+                              <Typography variant="body2">
+                                {t('models.details.cacheRead')}: {formatCurrency(selectedModel.pricing.cacheRead)}/{selectedModel.pricing.unit || 'K'} {t('models.details.tokens')}
+                              </Typography>
+                            ) : null}
                           </>
                         )}
                       </Stack>
