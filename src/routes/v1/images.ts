@@ -4,8 +4,9 @@ import type { PendingRequest, ImageGenerationRequest } from '../../types.js';
 import { addPendingRequest, removePendingRequest } from '../../requestStore.js';
 import { generateRequestId } from '../../responseBuilder.js';
 import { broadcastRequest } from '../../websocket.js';
-import { getModel, validateApiKey } from '../../storage.js';
+import { getModel, validateApiKey, createUsageRecord, getUserById, updateUser } from '../../storage.js';
 import { isModelForwardingConfigured } from '../../forwarder.js';
+import { calculateCost, calculateTokens } from '../../billing.js';
 import multer from 'multer';
 import path from 'path';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
@@ -80,6 +81,59 @@ async function authenticateRequest(req: Request, res: Response): Promise<object 
   return null;
 }
 
+// 尝试从上游响应中提取 token 用量（兼容 OpenAI / Gemini 等不同格式）
+function extractTokenUsage(response: any): { promptTokens?: number; completionTokens?: number } | null {
+  if (response?.usage?.prompt_tokens != null) {
+    return { promptTokens: response.usage.prompt_tokens, completionTokens: response.usage.completion_tokens ?? 0 };
+  }
+  if (response?.usage?.input_tokens != null) {
+    return { promptTokens: response.usage.input_tokens, completionTokens: response.usage.output_tokens ?? 0 };
+  }
+  if (response?.usageMetadata?.promptTokenCount != null) {
+    return { promptTokens: response.usageMetadata.promptTokenCount, completionTokens: response.usageMetadata.candidatesTokenCount ?? 0 };
+  }
+  return null;
+}
+
+// 辅助函数：完成图片请求的计费（计算费用 + 记录用量 + 扣减余额）
+async function applyImageBilling(params: {
+  userId: string;
+  apiKeyId: string;
+  model: any;
+  prompt: string;
+  requestId: string;
+  promptTokens?: number;
+  completionTokens?: number;
+}): Promise<void> {
+  const { userId, apiKeyId, model, prompt, requestId } = params;
+  const promptTokens = params.promptTokens ?? calculateTokens(prompt, model.id);
+  const completionTokens = params.completionTokens ?? 0;
+  const totalTokens = promptTokens + completionTokens;
+  const cost = calculateCost(promptTokens, completionTokens, model);
+  if (cost <= 0) return;
+
+  await createUsageRecord({
+    userId,
+    apiKeyId,
+    model: model.id,
+    endpoint: 'image',
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cost,
+    timestamp: Date.now(),
+    requestId,
+  });
+
+  const user = getUserById(userId);
+  if (user) {
+    await updateUser(userId, {
+      balance: user.balance - cost,
+      totalUsage: (user.totalUsage || 0) + totalTokens,
+    });
+  }
+}
+
 // 辅助函数：校验模型存在且为 image 类型，返回 model 或发送响应并 return null
 function validateImageModel(modelId: string, res: Response): object | null {
   const model = getModel(modelId);
@@ -110,7 +164,8 @@ function validateImageModel(modelId: string, res: Response): object | null {
 async function waitForImageResponse(
   pending: PendingRequest,
   res: Response,
-  timeoutMs: number = 10 * 60 * 1000
+  timeoutMs: number = 10 * 60 * 1000,
+  onSuccess?: (images: Array<{ url?: string; b64_json?: string }>) => Promise<void>
 ): Promise<void> {
   const responsePromise = new Promise<Array<{ url?: string; b64_json?: string }>>((resolve) => {
     pending.resolve = (data: string) => {
@@ -136,6 +191,9 @@ async function waitForImageResponse(
   try {
     const images = await responsePromise;
     clearTimeout(timeout);
+    if (onSuccess) {
+      await onSuccess(images);
+    }
     res.json({
       created: Math.floor(Date.now() / 1000),
       data: images,
@@ -168,12 +226,24 @@ router.post('/generations', async (req: Request, res: Response) => {
   const model = validateImageModel(modelId, res);
   if (!model) return;
 
+  const apiKeyObj = apiKeyResult as any;
+  const userId = apiKeyObj?.userId;
+  const apiKeyId = apiKeyObj?.id || '';
+
   // 转发模式：如果模型配置了转发，直接转发到上游
   const runtimeModel = model as any;
   if (isModelForwardingConfigured(runtimeModel)) {
     const { forwardImageRequest } = await import('../../forwarder.js');
     const result = await forwardImageRequest(runtimeModel, body, 'imageGenerations');
     if (result.success) {
+      if (userId && apiKeyId) {
+        const usage = extractTokenUsage(result.response);
+        await applyImageBilling({
+          userId, apiKeyId, model: runtimeModel, prompt: body.prompt, requestId: generateRequestId(),
+          promptTokens: usage?.promptTokens,
+          completionTokens: usage?.completionTokens,
+        });
+      }
       return res.json(result.response);
     }
     console.error('[Image Forwarder] 转发失败:', result.error);
@@ -212,7 +282,9 @@ router.post('/generations', async (req: Request, res: Response) => {
     },
   };
 
-  await waitForImageResponse(pending, res);
+  await waitForImageResponse(pending, res, undefined, userId && apiKeyId ? async () => {
+    await applyImageBilling({ userId, apiKeyId, model: runtimeModel, prompt: body.prompt, requestId });
+  } : undefined);
 });
 
 // POST /v1/images/edits - 图片编辑（支持 multipart 上传 + JSON 两种格式）
@@ -232,6 +304,10 @@ router.post(['/edits', '/edit'], upload.any(), async (req: Request, res: Respons
   const apiKeyResult = await authenticateRequest(req, res);
   if (apiKeyResult === false) return;
 
+  const apiKeyObj = apiKeyResult as any;
+  const userId = apiKeyObj?.userId;
+  const apiKeyId = apiKeyObj?.id || '';
+
   const modelId = body.model || 'dall-e-2';
   const model = validateImageModel(modelId, res);
   if (!model) return;
@@ -242,6 +318,14 @@ router.post(['/edits', '/edit'], upload.any(), async (req: Request, res: Respons
     const { forwardImageRequest } = await import('../../forwarder.js');
     const result = await forwardImageRequest(runtimeModel, body, 'imageEdits', files);
     if (result.success) {
+      if (userId && apiKeyId) {
+        const usage = extractTokenUsage(result.response);
+        await applyImageBilling({
+          userId, apiKeyId, model: runtimeModel, prompt: body.prompt, requestId: generateRequestId(),
+          promptTokens: usage?.promptTokens,
+          completionTokens: usage?.completionTokens,
+        });
+      }
       return res.json(result.response);
     }
     console.error('[Image Forwarder] 转发失败:', result.error);
@@ -289,7 +373,9 @@ router.post(['/edits', '/edit'], upload.any(), async (req: Request, res: Respons
     imageRequest,
   };
 
-  await waitForImageResponse(pending, res);
+  await waitForImageResponse(pending, res, undefined, userId && apiKeyId ? async () => {
+    await applyImageBilling({ userId, apiKeyId, model: runtimeModel, prompt: body.prompt, requestId });
+  } : undefined);
 });
 
 export default router;
