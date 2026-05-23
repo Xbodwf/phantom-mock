@@ -498,7 +498,8 @@ export async function forwardImageRequest(
 
       for (const f of files) {
         const fileBuffer = readFileSync(f.path);
-        form.append('image', new Blob([fileBuffer], { type: f.mimetype || 'image/png' } as BlobPropertyBag), f.originalname);
+        const fieldName = f.fieldname || 'image';
+        form.append(fieldName, new Blob([fileBuffer], { type: f.mimetype || 'image/png' } as BlobPropertyBag), f.originalname);
       }
 
       const response = await axios.post(url, form, {
