@@ -216,7 +216,7 @@ router.post('/generations', async (req: Request, res: Response) => {
 });
 
 // POST /v1/images/edits - 图片编辑（支持 multipart 上传 + JSON 两种格式）
-router.post('/edits', upload.any(), async (req: Request, res: Response) => {
+router.post(['/edits', '/edit'], upload.any(), async (req: Request, res: Response) => {
   const body = req.body;
   const files = req.files as Express.Multer.File[] | undefined;
 
