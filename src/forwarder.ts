@@ -157,13 +157,15 @@ export function isModelForwardingConfigured(model: Model): boolean {
 }
 
 type ForwardEndpoint =
- | 'chat'
- | 'embeddings'
- | 'rerank'
- | 'anthropicMessages'
- | 'geminiGenerateContent'
- | 'geminiStreamGenerateContent'
- | 'geminiEmbedContent';
+  | 'chat'
+  | 'embeddings'
+  | 'rerank'
+  | 'anthropicMessages'
+  | 'geminiGenerateContent'
+  | 'geminiStreamGenerateContent'
+  | 'geminiEmbedContent'
+  | 'imageGenerations'
+  | 'imageEdits';
 
 function normalizeBaseUrl(baseUrl: string): string {
  return baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
@@ -265,11 +267,19 @@ export function resolveForwardUrl(
  return `${baseUrl}/v1beta/models/${encodeURIComponent(forwardModel)}:generateContent?key=${encodeURIComponent(effectiveApiKey)}`;
  case 'geminiStreamGenerateContent':
  return `${baseUrl}/v1beta/models/${encodeURIComponent(forwardModel)}:streamGenerateContent?key=${encodeURIComponent(effectiveApiKey)}&alt=sse`;
- case 'geminiEmbedContent':
- return `${baseUrl}/v1beta/models/${encodeURIComponent(forwardModel)}:embedContent?key=${encodeURIComponent(effectiveApiKey)}`;
- default:
- throw new Error(`Unsupported forwarding endpoint: ${endpoint}`);
- }
+  case 'geminiEmbedContent':
+  return `${baseUrl}/v1beta/models/${encodeURIComponent(forwardModel)}:embedContent?key=${encodeURIComponent(effectiveApiKey)}`;
+  case 'imageGenerations':
+  return baseUrl.includes('/images/generations')
+  ? baseUrl
+  : appendPath(baseUrl, '/images/generations');
+  case 'imageEdits':
+  return baseUrl.includes('/images/edits')
+  ? baseUrl
+  : appendPath(baseUrl, '/images/edits');
+  default:
+  throw new Error(`Unsupported forwarding endpoint: ${endpoint}`);
+  }
 }
 
 /**
@@ -444,6 +454,75 @@ export async function forwardEmbeddingsRequest(
 
     return { success: true, response: response.data };
   } catch (error: any) {
+    const standardizedError = standardizeErrorResponse(error, apiType);
+    return { success: false, error: JSON.stringify(standardizedError) };
+  }
+}
+
+export async function forwardImageRequest(
+  model: Model,
+  body: any,
+  endpoint: 'imageGenerations' | 'imageEdits',
+  files?: Express.Multer.File[]
+): Promise<{ success: true; response: any } | { success: false; error: string }> {
+  if (!isModelForwardingConfigured(model)) {
+    return { success: false, error: 'Model not configured for forwarding' };
+  }
+
+  const apiType = model.api_type || 'openai';
+
+  try {
+    const requestedModel = body.model || model.id;
+    const forwardModel = getForwardModelName(model, requestedModel);
+    const url = resolveForwardUrl(model, endpoint, requestedModel, forwardModel);
+    const apiKey = getEffectiveApiKey(model);
+
+    console.log(`[Forwarder] 图片请求转发 URL: ${url}`);
+    console.log(`[Forwarder] API Key: ${hideKey(apiKey)}`);
+
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${apiKey}`,
+    };
+
+    if (endpoint === 'imageEdits' && files && files.length > 0) {
+      const { Blob } = await import('buffer');
+      const { readFileSync } = await import('fs');
+      const FormData = globalThis.FormData;
+
+      const form = new FormData();
+      form.append('prompt', body.prompt);
+      if (body.model) form.append('model', forwardModel);
+      if (body.n) form.append('n', String(body.n));
+      if (body.size) form.append('size', body.size);
+      if (body.response_format) form.append('response_format', body.response_format);
+
+      for (const f of files) {
+        const fileBuffer = readFileSync(f.path);
+        const blob = new Blob([fileBuffer], { type: f.mimetype || 'image/png' });
+        form.append('image', blob, f.originalname);
+      }
+
+      const response = await axios.post(url, form, {
+        headers: { ...headers },
+        timeout: 120000,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      });
+
+      return { success: true, response: response.data };
+    } else {
+      const forwardBody: any = { ...body, model: forwardModel };
+
+      const response = await axios.post(url, forwardBody, {
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        timeout: 120000,
+      });
+
+      return { success: true, response: response.data };
+    }
+  } catch (error: any) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[Forwarder] Error forwarding image request:`, errorMessage);
     const standardizedError = standardizeErrorResponse(error, apiType);
     return { success: false, error: JSON.stringify(standardizedError) };
   }

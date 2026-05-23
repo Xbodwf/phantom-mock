@@ -5,6 +5,7 @@ import { addPendingRequest, removePendingRequest } from '../../requestStore.js';
 import { generateRequestId } from '../../responseBuilder.js';
 import { broadcastRequest } from '../../websocket.js';
 import { getModel, validateApiKey } from '../../storage.js';
+import { isModelForwardingConfigured } from '../../forwarder.js';
 import multer from 'multer';
 import path from 'path';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
@@ -167,6 +168,17 @@ router.post('/generations', async (req: Request, res: Response) => {
   const model = validateImageModel(modelId, res);
   if (!model) return;
 
+  // 转发模式：如果模型配置了转发，直接转发到上游
+  const runtimeModel = model as any;
+  if (isModelForwardingConfigured(runtimeModel)) {
+    const { forwardImageRequest } = await import('../../forwarder.js');
+    const result = await forwardImageRequest(runtimeModel, body, 'imageGenerations');
+    if (result.success) {
+      return res.json(result.response);
+    }
+    console.error('[Image Forwarder] 转发失败:', result.error);
+  }
+
   const requestId = generateRequestId();
   const n = body.n || 1;
   const size = body.size || '1024x1024';
@@ -223,6 +235,17 @@ router.post('/edits', upload.any(), async (req: Request, res: Response) => {
   const modelId = body.model || 'dall-e-2';
   const model = validateImageModel(modelId, res);
   if (!model) return;
+
+  // 转发模式：如果模型配置了转发，直接转发到上游
+  const runtimeModel = model as any;
+  if (isModelForwardingConfigured(runtimeModel)) {
+    const { forwardImageRequest } = await import('../../forwarder.js');
+    const result = await forwardImageRequest(runtimeModel, body, 'imageEdits', files);
+    if (result.success) {
+      return res.json(result.response);
+    }
+    console.error('[Image Forwarder] 转发失败:', result.error);
+  }
 
   const requestId = generateRequestId();
   const isEdit = (files && files.length > 0) || !!body.image;
