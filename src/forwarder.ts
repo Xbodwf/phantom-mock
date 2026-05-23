@@ -485,9 +485,7 @@ export async function forwardImageRequest(
     };
 
     if (endpoint === 'imageEdits' && files && files.length > 0) {
-      const { Blob } = await import('buffer');
       const { readFileSync } = await import('fs');
-      const FormData = globalThis.FormData;
 
       const form = new FormData();
       form.append('prompt', body.prompt);
@@ -498,8 +496,7 @@ export async function forwardImageRequest(
 
       for (const f of files) {
         const fileBuffer = readFileSync(f.path);
-        const blob = new Blob([fileBuffer], { type: f.mimetype || 'image/png' });
-        form.append('image', blob, f.originalname);
+        form.append('image', new Blob([fileBuffer], { type: f.mimetype || 'image/png' } as BlobPropertyBag), f.originalname);
       }
 
       const response = await axios.post(url, form, {
