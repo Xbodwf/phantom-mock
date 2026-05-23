@@ -49,14 +49,21 @@ router.post('/generations', async (req: Request, res: Response) => {
     });
   }
 
-  const modelId = body.model || 'sora';
-  const model = getModel(modelId);
+  if (!body.model) {
+    return res.status(400).json({
+      error: {
+        message: 'model is required',
+        type: 'invalid_request_error',
+      }
+    });
+  }
+  const model = getModel(body.model);
 
   // 验证模型存在
   if (!model) {
     return res.status(404).json({
       error: {
-        message: `Model '${modelId}' not found`,
+        message: `Model '${body.model}' not found`,
         type: 'invalid_request_error',
         code: 'model_not_found',
       }
@@ -67,7 +74,7 @@ router.post('/generations', async (req: Request, res: Response) => {
   if (model.type !== 'video') {
     return res.status(400).json({
       error: {
-        message: `Model '${modelId}' (type: ${model.type}) does not support video generation`,
+        message: `Model '${body.model}' (type: ${model.type}) does not support video generation`,
         type: 'invalid_request_error',
         code: 'model_type_not_supported',
       }
@@ -81,22 +88,21 @@ router.post('/generations', async (req: Request, res: Response) => {
   console.log('\n========================================');
   console.log('收到新的视频生成请求');
   console.log('请求ID:', requestId);
-  console.log('模型:', modelId);
+  console.log('模型:', body.model);
   console.log('提示词:', body.prompt.substring(0, 100));
   console.log('时长:', duration, '秒');
   console.log('宽高比:', aspectRatio);
   console.log('========================================\n');
 
-  // 创建待处理请求
   const pending: PendingRequest = {
     requestId,
-    request: { model: modelId, messages: [] },
+    request: { model: body.model, messages: [] },
     isStream: false,
     createdAt: Date.now(),
     resolve: () => {},
     requestType: 'video',
     videoRequest: {
-      model: modelId,
+      model: body.model,
       prompt: body.prompt,
       size: body.size,
       duration,

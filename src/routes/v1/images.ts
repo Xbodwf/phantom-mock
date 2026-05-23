@@ -222,8 +222,12 @@ router.post('/generations', async (req: Request, res: Response) => {
   const apiKeyResult = await authenticateRequest(req, res);
   if (apiKeyResult === false) return;
 
-  const modelId = body.model || 'dall-e-3';
-  const model = validateImageModel(modelId, res);
+  if (!body.model) {
+    return res.status(400).json({
+      error: { message: 'model is required', type: 'invalid_request_error' }
+    });
+  }
+  const model = validateImageModel(body.model, res);
   if (!model) return;
 
   const apiKeyObj = apiKeyResult as any;
@@ -256,7 +260,7 @@ router.post('/generations', async (req: Request, res: Response) => {
   console.log('\n========================================');
   console.log('收到新的图片生成请求');
   console.log('请求ID:', requestId);
-  console.log('模型:', modelId);
+  console.log('模型:', body.model);
   console.log('提示词:', body.prompt.substring(0, 100));
   console.log('数量:', n);
   console.log('尺寸:', size);
@@ -265,13 +269,13 @@ router.post('/generations', async (req: Request, res: Response) => {
 
   const pending: PendingRequest = {
     requestId,
-    request: { model: modelId, messages: [] },
+    request: { model: body.model, messages: [] },
     isStream: false,
     createdAt: Date.now(),
     resolve: () => {},
     requestType: 'image',
     imageRequest: {
-      model: modelId,
+      model: body.model,
       prompt: body.prompt,
       n,
       size,
@@ -308,8 +312,12 @@ router.post(['/edits', '/edit'], upload.any(), async (req: Request, res: Respons
   const userId = apiKeyObj?.userId;
   const apiKeyId = apiKeyObj?.id || '';
 
-  const modelId = body.model || 'dall-e-2';
-  const model = validateImageModel(modelId, res);
+  if (!body.model) {
+    return res.status(400).json({
+      error: { message: 'model is required', type: 'invalid_request_error' }
+    });
+  }
+  const model = validateImageModel(body.model, res);
   if (!model) return;
 
   // 转发模式：如果模型配置了转发，直接转发到上游
@@ -344,7 +352,7 @@ router.post(['/edits', '/edit'], upload.any(), async (req: Request, res: Respons
   console.log('\n========================================');
   console.log(isEdit ? '收到新的图片编辑请求' : '收到新的图片生成请求（通过 /edits）');
   console.log('请求ID:', requestId);
-  console.log('模型:', modelId);
+  console.log('模型:', body.model);
   console.log('提示词:', body.prompt.substring(0, 100));
   console.log('数量:', body.n || 1);
   console.log('尺寸:', body.size || '1024x1024');
@@ -352,7 +360,7 @@ router.post(['/edits', '/edit'], upload.any(), async (req: Request, res: Respons
   console.log('========================================\n');
 
   const imageRequest: ImageGenerationRequest = {
-    model: modelId,
+    model: body.model,
     prompt: isEdit ? `[编辑图片] ${body.prompt}` : body.prompt,
     n: body.n || 1,
     size: body.size || '1024x1024',
@@ -365,7 +373,7 @@ router.post(['/edits', '/edit'], upload.any(), async (req: Request, res: Respons
 
   const pending: PendingRequest = {
     requestId,
-    request: { model: modelId, messages: [] },
+    request: { model: body.model, messages: [] },
     isStream: false,
     createdAt: Date.now(),
     resolve: () => {},
