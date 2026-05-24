@@ -754,6 +754,7 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const smoothIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null); // 平滑发送定时器
   const smoothQueueRef = useRef<string>(''); // 待发送的字符队列
+  const lastSentLengthRef = useRef<number>(0); // 已自动发送的字符数
   
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -849,11 +850,27 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
     setResponse('');
   };
 
-  // 处理流式输入变化 - 仅更新输入值，不再自动发送
+  // 发送新增字符（自动流式），不清空输入框
+  const sendNewChars = useCallback((value: string) => {
+    const newLen = value.length;
+    if (newLen > lastSentLengthRef.current) {
+      const newChars = value.substring(lastSentLengthRef.current);
+      sendStreamChunk(requestId, newChars);
+      setSentChunks(prev => [...prev, { content: newChars, sentAt: Date.now() }]);
+      lastSentLengthRef.current = newLen;
+    } else {
+      lastSentLengthRef.current = newLen;
+    }
+  }, [requestId, sendStreamChunk]);
+
+  // 处理流式输入变化 - 自动发送新增字符，但不清空输入框
   const handleStreamInputChange = useCallback((value: string) => {
     if (isSmoothSending) return;
     setStreamInput(value);
-    // 清除任何待发送状态（用户修改了内容）
+
+    if (smoothOutput) return;
+
+    // 清除之前的延迟定时器
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -864,37 +881,47 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
     }
     setPendingSend(null);
     setCountdown(0);
-  }, [isSmoothSending]);
 
-  // 手动发送流式内容
-  const handleSendStream = useCallback(() => {
-    if (!streamInput.trim()) return;
-
-    if (smoothOutput) {
-      startSmoothSend(streamInput);
+    if (!value.trim()) {
+      lastSentLengthRef.current = 0;
       return;
     }
 
     if (delay === 0) {
-      sendStreamChunk(requestId, streamInput);
-      setSentChunks(prev => [...prev, { content: streamInput, sentAt: Date.now() }]);
-      setStreamInput('');
+      sendNewChars(value);
+    } else {
+      setPendingSend(value);
+      timerRef.current = setTimeout(() => {
+        sendNewChars(value);
+        setPendingSend(null);
+        setCountdown(0);
+        timerRef.current = null;
+      }, delay);
+    }
+  }, [delay, isSmoothSending, smoothOutput, sendNewChars]);
+
+  // 刷新按钮：发送剩余未自动发送的内容
+  const handleFlushStream = useCallback(() => {
+    if (isSmoothSending) {
+      stopSmoothSend();
       return;
     }
 
-    // 延迟发送模式
-    setPendingSend(streamInput);
-    timerRef.current = setTimeout(() => {
-      if (streamInput.trim()) {
-        sendStreamChunk(requestId, streamInput);
-        setSentChunks(prev => [...prev, { content: streamInput, sentAt: Date.now() }]);
-        setStreamInput('');
-      }
-      setPendingSend(null);
-      setCountdown(0);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
       timerRef.current = null;
-    }, delay);
-  }, [streamInput, delay, requestId, sendStreamChunk, smoothOutput, startSmoothSend]);
+    }
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+
+    if (streamInput.trim()) {
+      sendNewChars(streamInput);
+    }
+    setPendingSend(null);
+    setCountdown(0);
+  }, [streamInput, isSmoothSending, sendNewChars, stopSmoothSend]);
 
   // 平滑模式下开始发送
   const handleStartSmoothSend = () => {
@@ -903,9 +930,8 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
     }
   };
 
-  // 立即发送当前内容
+  // 立即发送当前内容（延迟模式下点击"立即发送"）
   const handleImmediateSend = () => {
-    // 如果正在平滑发送，停止并发送剩余内容
     if (isSmoothSending) {
       stopSmoothSend();
       return;
@@ -921,9 +947,7 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
     }
     
     if (streamInput.trim()) {
-      sendStreamChunk(requestId, streamInput);
-      setSentChunks(prev => [...prev, { content: streamInput, sentAt: Date.now() }]);
-      setStreamInput('');
+      sendNewChars(streamInput);
     }
     setPendingSend(null);
     setCountdown(0);
@@ -931,7 +955,6 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
 
   // 取消发送
   const handleCancelSend = () => {
-    // 如果正在平滑发送，停止但不发送剩余内容
     if (isSmoothSending) {
       if (smoothIntervalRef.current) {
         clearInterval(smoothIntervalRef.current);
@@ -962,7 +985,6 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
     if (smoothIntervalRef.current) {
       clearInterval(smoothIntervalRef.current);
     }
-    // 如果还有剩余内容，先发送
     if (smoothQueueRef.current) {
       sendStreamChunk(requestId, smoothQueueRef.current);
       smoothQueueRef.current = '';
@@ -1469,15 +1491,26 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
                     {smoothOutput ? `平滑: ${smoothSpeed} 字/秒` : `延迟: ${delay}ms`} | 已发送: {sentChunks.length} 块
                   </Typography>
                   <Stack direction="row" spacing={1}>
-                    {!isSmoothSending && (
+                    {smoothOutput && !isSmoothSending && (
                       <Button
                         variant="contained"
-                        onClick={handleSendStream}
-                        disabled={!streamInput.trim() || !!pendingSend}
+                        onClick={() => startSmoothSend(streamInput)}
+                        disabled={!streamInput.trim()}
                         startIcon={<Send size={14} />}
                         size="small"
                       >
-                        {smoothOutput ? '开始平滑输出' : '发送'}
+                        开始平滑输出
+                      </Button>
+                    )}
+                    {!smoothOutput && (
+                      <Button
+                        variant="outlined"
+                        onClick={handleFlushStream}
+                        disabled={!streamInput.trim()}
+                        startIcon={<Send size={14} />}
+                        size="small"
+                      >
+                        刷新
                       </Button>
                     )}
                     <Button
