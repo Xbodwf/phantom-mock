@@ -273,6 +273,14 @@ async function streamWithBuiltinTools(
                     if (tc.function?.name) buf.name = tc.function.name;
                     if (tc.function?.arguments) buf.args += tc.function.arguments;
                   }
+                  // 转发 tool_call 块给客户端（但不转发 finish_reason）
+                  res.write(`data: ${JSON.stringify({
+                    id: requestId,
+                    object: 'chat.completion.chunk',
+                    created: Math.floor(Date.now() / 1000),
+                    model: body.model,
+                    choices: [{ index: 0, delta, finish_reason: null }],
+                  })}\n\n`);
                 }
               } catch { /* skip parse error */ }
             }
@@ -342,6 +350,14 @@ async function streamWithBuiltinTools(
             extra: (tc as any).extra_content,
           });
         }
+        // 转发 tool_call 给客户端
+        res.write(`data: ${JSON.stringify({
+          id: requestId,
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: body.model,
+          choices: [{ index: 0, delta: { tool_calls: msg.tool_calls }, finish_reason: null }],
+        })}\n\n`);
       }
 
         finishReason = choice?.finish_reason || null;
