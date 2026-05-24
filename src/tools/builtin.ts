@@ -103,7 +103,7 @@ export async function executeWebSearch(args: { query: string; max_results?: numb
 }
 
 export async function executeBuiltinTool(
-  toolCall: { name: string; arguments: string }
+  toolCall: { name: string; arguments: string; tool_call_id?: string }
 ): Promise<{ role: string; tool_call_id: string; content: string }> {
   let args: any = {};
   try {
@@ -123,7 +123,7 @@ export async function executeBuiltinTool(
 
   return {
     role: 'tool',
-    tool_call_id: toolCall.name,
+    tool_call_id: toolCall.tool_call_id || toolCall.name,
     content: result,
   };
 }
