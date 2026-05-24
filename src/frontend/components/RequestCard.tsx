@@ -766,6 +766,30 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
   const smoothSpeed = settings.smoothSpeed || 20; // 字符/秒
   const requestType = request.requestType || 'chat';
 
+  // 从 JSON Schema 生成模板 JSON
+  const schemaToTemplate = useCallback((schema: any): string => {
+    if (!schema || schema.type !== 'object' || !schema.properties) {
+      return '{}';
+    }
+    const template: Record<string, any> = {};
+    for (const [key, prop] of Object.entries<any>(schema.properties)) {
+      if (prop.type === 'string') {
+        template[key] = prop.enum ? prop.enum[0] : '';
+      } else if (prop.type === 'number' || prop.type === 'integer') {
+        template[key] = 0;
+      } else if (prop.type === 'boolean') {
+        template[key] = false;
+      } else if (prop.type === 'object') {
+        template[key] = {};
+      } else if (prop.type === 'array') {
+        template[key] = [];
+      } else {
+        template[key] = '';
+      }
+    }
+    return JSON.stringify(template, null, 2);
+  }, []);
+
   // 清理定时器
   useEffect(() => {
     return () => {
@@ -1283,11 +1307,13 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
                 {req.tools && req.tools.length > 0 && (
                   <Box sx={{ mb: 2 }}>
                     <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                      客户端可用工具（点击名称自动填充）:
+                      客户端可用工具（点击自动填充函数名和参数模板）:
                     </Typography>
                     <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                       {req.tools.map((tool: any, i: number) => {
-                        const name = tool.function?.name || tool.name || `tool_${i}`;
+                        const fn = tool.function || tool;
+                        const name = fn.name || `tool_${i}`;
+                        const args = schemaToTemplate(fn.parameters);
                         return (
                           <Chip
                             key={i}
@@ -1297,7 +1323,7 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
                             onClick={() => {
                               setToolCalls(prev => {
                                 const next = [...prev];
-                                if (next[0]) next[0] = { ...next[0], name };
+                                if (next[0]) next[0] = { ...next[0], name, arguments: args };
                                 return next;
                               });
                             }}
@@ -1316,6 +1342,7 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
                     <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                       {req.functions.map((fn: any, i: number) => {
                         const name = fn.name || `func_${i}`;
+                        const args = schemaToTemplate(fn.parameters);
                         return (
                           <Chip
                             key={i}
@@ -1325,7 +1352,7 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
                             onClick={() => {
                               setToolCalls(prev => {
                                 const next = [...prev];
-                                if (next[0]) next[0] = { ...next[0], name };
+                                if (next[0]) next[0] = { ...next[0], name, arguments: args };
                                 return next;
                               });
                             }}
