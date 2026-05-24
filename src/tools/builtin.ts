@@ -1,5 +1,12 @@
 import { parse } from 'node-html-parser';
 
+export const BUILTIN_TOOL_NAMES = new Set(['web_fetch', 'web_search']);
+
+export function hasBuiltinTools(tools: any[]): boolean {
+  if (!tools) return false;
+  return tools.some((t: any) => BUILTIN_TOOL_NAMES.has(t.function?.name));
+}
+
 export interface ToolDefinition {
   type: 'function';
   function: {

@@ -13,7 +13,7 @@ import { sendRequestToNode, isNodeConnected } from '../reverseWebSocket.js';
 const streamContentMap = new Map<string, string>();
 import { getContentString, extractApiKey } from '../routes/v1/utils.js';
 import type { Message } from '../types.js';
-import { BUILTIN_TOOLS, executeBuiltinTool } from '../tools/builtin.js';
+import { BUILTIN_TOOLS, executeBuiltinTool, hasBuiltinTools } from '../tools/builtin.js';
 import {
   createChatSession,
   getChatSessionById,
@@ -630,22 +630,67 @@ async function handleUserChatRequest(
         }
       };
 
-      try {
-        await forwardStreamRequest(runtimeModel, body, res, (info) => {
-          if (!streamEnded) {
-            if (info.content) streamingContent += info.content;
-            if (info.reasoningContent) streamingReasoning += info.reasoningContent || '';
-            
-            // 节流写入DB
-            const now = Date.now();
-            if (sessionId && aiMsgCreated && now - lastDbFlush > 300) {
-              lastDbFlush = now;
-              flushToDb().catch(() => {});
-            }
+      // 判断是否包含内置工具 — 需走非流式转发+工具执行循环
+      const useToolLoop = hasBuiltinTools(body.tools);
+
+      if (useToolLoop) {
+        // 非流式转发 + 工具执行循环，再将最终结果流式输出
+        let currentBody = body;
+        let finalContent = '';
+        let finalReasoning = '';
+        const maxToolRounds = 5;
+        let toolRound = 0;
+
+        while (toolRound < maxToolRounds) {
+          const forwardResult = await forwardChatRequest(runtimeModel, currentBody);
+
+          if (!forwardResult.success) {
+            streamEnded = true;
+            console.error('[User Chat] Forwarding failed:', forwardResult.error);
+            if (res.headersSent) return;
+            return res.status(502).json({
+              error: { message: forwardResult.error, type: 'forwarding_error', code: 'forwarding_failed' }
+            });
           }
-        });
-        
-        // 流结束：标记完成并写入最终内容
+
+          const response = forwardResult.response;
+          const choice = response.choices?.[0];
+          const message = choice?.message;
+
+          finalContent = message?.content || '';
+          finalReasoning = message?.reasoning_content || '';
+
+          const toolCalls = message?.tool_calls || [];
+          const builtinToolCalls = toolCalls.filter((tc: any) =>
+            BUILTIN_TOOLS.some(t => t.function.name === tc.function?.name)
+          );
+
+          if (builtinToolCalls.length === 0) break;
+
+          toolRound++;
+          const toolResults = await Promise.all(
+            builtinToolCalls.map((tc: any) =>
+              executeBuiltinTool({ name: tc.function.name, arguments: tc.function.arguments })
+            )
+          );
+
+          const newMessages = [...(currentBody.messages || [])];
+          newMessages.push({
+            role: 'assistant',
+            content: message?.content || null,
+            tool_calls: toolCalls,
+          });
+          for (const r of toolResults) newMessages.push(r);
+          currentBody = { ...currentBody, messages: newMessages };
+        }
+
+        // 流式输出最终结果
+        if (finalContent) {
+          res.write(buildStreamChunk(requestId, body.model, finalContent, true, false, finalReasoning || null));
+          streamingContent = finalContent;
+          streamingReasoning = finalReasoning;
+        }
+
         streamEnded = true;
         if (sessionId && aiMsgCreated) {
           try {
@@ -656,47 +701,85 @@ async function handleUserChatRequest(
               if (idx !== -1) {
                 msgs[idx] = {
                   ...msgs[idx],
-                  content: streamingContent,
-                  reasoning_content: streamingReasoning || undefined,
-                  _isStreaming: false,
-                };
-                await updateChatSession(sessionId, { messages: msgs, updatedAt: Date.now() });
-                console.log(`[User Chat] Forward stream finalized, session=${sessionId}, content=${streamingContent.length} chars`);
-              }
-            }
-          } catch (e) {
-            console.error('[User Chat] Failed to finalize forward stream:', e);
-          }
-        }
-      } catch (error: any) {
-        streamEnded = true;
-        console.error('[User Chat] Stream forwarding failed:', error.message);
-        if (sessionId && aiMsgCreated) {
-          try {
-            const s = await getChatSessionById(sessionId);
-            if (s && s.ownerId === userId) {
-              const msgs = [...s.messages];
-              const idx = msgs.findIndex((m: any) => m.role === 'assistant' && m._isStreaming);
-              if (idx !== -1) {
-                msgs[idx] = {
-                  ...msgs[idx],
-                  content: streamingContent || `请求失败: ${error.message}`,
+                  content: finalContent,
+                  reasoning_content: finalReasoning || undefined,
                   _isStreaming: false,
                 };
                 await updateChatSession(sessionId, { messages: msgs, updatedAt: Date.now() });
               }
             }
-          } catch (e) {}
+          } catch {}
         }
-        if (!res.headersSent) {
-          return res.status(502).json({
-            error: {
-              message: `Forwarding failed: ${error.message}`,
-              type: 'forwarding_error',
-              code: 'forwarding_failed',
+        res.write(buildStreamChunk(requestId, body.model, '', false, true));
+        res.write(buildStreamDone());
+        res.end();
+      } else {
+        // 无内置工具 — 直接流式转发
+        try {
+          await forwardStreamRequest(runtimeModel, body, res, (info) => {
+            if (!streamEnded) {
+              if (info.content) streamingContent += info.content;
+              if (info.reasoningContent) streamingReasoning += info.reasoningContent || '';
+              
+              const now = Date.now();
+              if (sessionId && aiMsgCreated && now - lastDbFlush > 300) {
+                lastDbFlush = now;
+                flushToDb().catch(() => {});
+              }
             }
           });
-        }
+          
+          streamEnded = true;
+          if (sessionId && aiMsgCreated) {
+            try {
+              const s = await getChatSessionById(sessionId);
+              if (s && s.ownerId === userId) {
+                const msgs = [...s.messages];
+                const idx = msgs.findIndex((m: any) => m.role === 'assistant' && m._isStreaming);
+                if (idx !== -1) {
+                  msgs[idx] = {
+                    ...msgs[idx],
+                    content: streamingContent,
+                    reasoning_content: streamingReasoning || undefined,
+                    _isStreaming: false,
+                  };
+                  await updateChatSession(sessionId, { messages: msgs, updatedAt: Date.now() });
+                  console.log(`[User Chat] Forward stream finalized, session=${sessionId}, content=${streamingContent.length} chars`);
+                }
+              }
+            } catch (e) {
+              console.error('[User Chat] Failed to finalize forward stream:', e);
+            }
+          }
+        } catch (error: any) {
+          streamEnded = true;
+          console.error('[User Chat] Stream forwarding failed:', error.message);
+          if (sessionId && aiMsgCreated) {
+            try {
+              const s = await getChatSessionById(sessionId);
+              if (s && s.ownerId === userId) {
+                const msgs = [...s.messages];
+                const idx = msgs.findIndex((m: any) => m.role === 'assistant' && m._isStreaming);
+                if (idx !== -1) {
+                  msgs[idx] = {
+                    ...msgs[idx],
+                    content: streamingContent || `请求失败: ${error.message}`,
+                    _isStreaming: false,
+                  };
+                  await updateChatSession(sessionId, { messages: msgs, updatedAt: Date.now() });
+                }
+              }
+            } catch (e) {}
+          }
+          if (!res.headersSent) {
+            return res.status(502).json({
+              error: {
+                message: `Forwarding failed: ${error.message}`,
+                type: 'forwarding_error',
+                code: 'forwarding_failed',
+              }
+            });
+          }
       }
       return;
     } else {
