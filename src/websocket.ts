@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { WSMessage, PendingRequest, Model } from './types.js';
 import { addPendingRequest, getPendingRequest, removePendingRequest, getAllPendingRequests } from './requestStore.js';
-import { buildToolCallStreamChunk } from './responseBuilder.js';
+import { buildToolCallChunk, buildToolCallFinishChunk } from './responseBuilder.js';
 
 let wss: WebSocketServer;
 const clients = new Set<WebSocket>();
@@ -110,11 +110,12 @@ function handleClientMessage(ws: WebSocket, msg: WSMessage) {
       console.log('[WS] 工具调用请求:', requestId, toolCalls);
 
       if (req.streamController) {
-        // 流式：发送工具调用 SSE 块，然后结束
+        // 流式：每个 tool call 发送独立 SSE 块，不关闭流（可继续发 text 或更多 tool call）
         const model = req.request?.model || 'unknown';
-        req.streamController.enqueue(buildToolCallStreamChunk(requestId, model, toolCalls, true, false));
-        req.streamController.enqueue(buildToolCallStreamChunk(requestId, model, toolCalls, false, true));
-        req.streamController.close();
+        toolCalls.forEach((tc, idx) => {
+          req.streamController!.enqueue(buildToolCallChunk(requestId, model, tc, idx, idx === 0));
+        });
+        req.streamController!.enqueue(buildToolCallFinishChunk(requestId, model));
       } else {
         // 非流式：构建带 tool_calls 的响应对象
         const responseData = {
@@ -140,8 +141,8 @@ function handleClientMessage(ws: WebSocket, msg: WSMessage) {
           }],
         };
         req.resolve(JSON.stringify(responseData));
+        removePendingRequest(requestId);
       }
-      removePendingRequest(requestId);
       console.log('[WS] 工具调用请求已处理:', requestId);
     } else if (msg.type === 'image_response') {
       // 图片响应

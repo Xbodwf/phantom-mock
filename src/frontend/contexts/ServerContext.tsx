@@ -238,11 +238,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   const sendToolCall = useCallback((requestId: string, toolCalls: Array<{ id: string; name: string; arguments: string }>) => {
   if (!ws) return;
   ws.send(JSON.stringify({ type: 'tool_call', payload: { requestId, toolCalls } }));
-  setPendingRequests(prev => {
-  const next = new Map(prev);
-  next.delete(requestId);
-  return next;
-  });
+  // 不删除请求，流式模式下可继续发送（由 stream_end 触发移除）
   }, [ws]);
 
  const sendStreamChunk = useCallback((requestId: string, content: string) => {

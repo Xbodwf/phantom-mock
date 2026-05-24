@@ -59,14 +59,13 @@ export function buildStreamChunk(
   return `data: ${JSON.stringify(chunk)}\n\n`;
 }
 
-// 构建工具调用流式块
-export function buildToolCallStreamChunk(
+// 构建单个工具调用流式块（每个 tool call 独立一块，标准 OpenAI 格式）
+export function buildToolCallChunk(
   requestId: string,
   model: string,
-  toolCalls: Array<{ id: string; name: string; arguments: string }>,
-  isFirst: boolean = false,
-  isLast: boolean = false,
-  finishReason: string | null = null
+  toolCall: { id: string; name: string; arguments: string },
+  index: number,
+  isFirst: boolean = false
 ): string {
   const chunk: any = {
     id: requestId,
@@ -77,23 +76,42 @@ export function buildToolCallStreamChunk(
       {
         index: 0,
         delta: isFirst ? { role: 'assistant', content: null } : {},
-        finish_reason: isLast ? (finishReason || 'tool_calls') : null,
+        finish_reason: null,
       },
     ],
   };
 
-  if (toolCalls && toolCalls.length > 0) {
-    chunk.choices[0].delta.tool_calls = toolCalls.map((tc, idx) => ({
-      index: idx,
-      id: tc.id,
-      type: 'function',
-      function: {
-        name: tc.name,
-        arguments: tc.arguments,
-      },
-    }));
-  }
+  chunk.choices[0].delta.tool_calls = [{
+    index,
+    id: toolCall.id,
+    type: 'function',
+    function: {
+      name: toolCall.name,
+      arguments: toolCall.arguments,
+    },
+  }];
 
+  return `data: ${JSON.stringify(chunk)}\n\n`;
+}
+
+// 构建工具调用流结束块
+export function buildToolCallFinishChunk(
+  requestId: string,
+  model: string
+): string {
+  const chunk: any = {
+    id: requestId,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [
+      {
+        index: 0,
+        delta: {},
+        finish_reason: 'tool_calls',
+      },
+    ],
+  };
   return `data: ${JSON.stringify(chunk)}\n\n`;
 }
 
