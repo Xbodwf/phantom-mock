@@ -32,6 +32,10 @@ export default defineConfig({
     strictPort: false,
     cors: true,
     allowedHosts: 'all',
+    headers: {
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Opener-Policy': 'same-origin',
+    },
     // 将所有非前端请求代理到后端
     proxy: {
       '/api': {

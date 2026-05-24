@@ -1,6 +1,13 @@
 import { MongoClient, Db, Collection, ObjectId } from 'mongodb';
 import { getDB } from './connection.js';
 
+export interface FileNode {
+  name: string;
+  type: 'file' | 'directory';
+  content?: string;
+  children?: FileNode[];
+}
+
 export interface ChatSession {
   _id?: ObjectId;
   id: string;
@@ -15,6 +22,7 @@ export interface ChatSession {
   updatedAt: number;
   isPublic: boolean;
   ownerId: string;
+  fileTree?: FileNode[];
 }
 
 export async function getChatSessionsCollection(): Promise<Collection<ChatSession>> {

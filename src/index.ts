@@ -65,11 +65,13 @@ const server = createServer(app);
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// CORS
+// CORS + 跨域隔离 (WebContainer SharedArrayBuffer 支持)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key');
+  res.header('Cross-Origin-Embedder-Policy', 'require-corp');
+  res.header('Cross-Origin-Opener-Policy', 'same-origin');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
@@ -277,8 +279,10 @@ app.use('/api/attachments', attachmentRoutes);
 // GET /api/session/:id 支持可选认证（公开会话无需认证）
 // 其他操作需要认证
 import sessionRoutes from './routes/session.js';
+import sessionFilesRoutes from './routes/session-files.js';
 import { optionalAuthMiddleware } from './middleware.js';
 app.use('/api/session', optionalAuthMiddleware, sessionRoutes);
+app.use('/api/session', sessionFilesRoutes);
 
 // ==================== 支付路由 ====================
 // 支付路由需要在初始化后才能使用，所以在 startServer 中动态挂载

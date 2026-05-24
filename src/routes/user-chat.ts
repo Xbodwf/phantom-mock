@@ -167,6 +167,7 @@ async function streamWithBuiltinTools(
   body: any,
   res: any,
   requestId: string,
+  sessionId?: string,
 ): Promise<string> {
   const { default: axios } = await import('axios');
 

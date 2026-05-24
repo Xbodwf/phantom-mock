@@ -1,6 +1,7 @@
 import { parse } from 'node-html-parser';
+import { getChatSessionById, updateChatSession, FileNode } from '../db/chatSessions.js';
 
-export const BUILTIN_TOOL_NAMES = new Set(['web_fetch', 'web_search']);
+export const BUILTIN_TOOL_NAMES = new Set(['web_fetch', 'web_search', 'file_read', 'file_write', 'file_list']);
 
 export function hasBuiltinTools(tools: any[]): boolean {
   if (!tools) return false;
@@ -56,6 +57,77 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'terminal',
+      description: 'Execute a terminal command in the WebContainer (browser-based Node.js environment). Supports all standard shell commands including git (via isomorphic-git CLI: npx isomorphic-git). Use this to run code, install dependencies, run git operations, or explore the project structure.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: {
+            type: 'string',
+            description: 'The shell command to execute',
+          },
+        },
+        required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'file_read',
+      description: 'Read the contents of a file from the project workspace. Returns the full file content.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'Path to the file (e.g. src/index.js)',
+          },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'file_write',
+      description: 'Write content to a file in the project workspace. Creates parent directories if needed. Use this to create new files or modify existing ones.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'Path to the file (e.g. src/index.js)',
+          },
+          content: {
+            type: 'string',
+            description: 'The full file content to write',
+          },
+        },
+        required: ['path', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'file_list',
+      description: 'List files and directories in the project workspace. Returns a tree structure of all files.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'Directory path to list (default: root /)',
+          },
+        },
+      },
+    },
+  },
 ];
 
 export async function executeWebFetch(args: { url: string }): Promise<string> {
@@ -102,8 +174,191 @@ export async function executeWebSearch(args: { query: string; max_results?: numb
   }
 }
 
+// ---- 文件系统工具 ----
+
+function findNode(tree: FileNode[], parts: string[]): FileNode | undefined {
+  let current = tree;
+  for (let i = 0; i < parts.length; i++) {
+    const node = current.find(n => n.name === parts[i]);
+    if (!node) return undefined;
+    if (i === parts.length - 1) return node;
+    if (node.type === 'directory' && node.children) current = node.children;
+    else return undefined;
+  }
+  return undefined;
+}
+
+function listNodes(tree: FileNode[], showAll: boolean, indent = ''): string[] {
+  const result: string[] = [];
+  for (const node of tree) {
+    if (!showAll && node.name.startsWith('.')) continue;
+    const suffix = node.type === 'directory' ? '/' : '';
+    result.push(indent + node.name + suffix);
+    if (node.type === 'directory' && node.children) {
+      result.push(...listNodes(node.children, showAll, indent + '  '));
+    }
+  }
+  return result;
+}
+
+async function executeTerminal(args: { command: string }, sessionId?: string): Promise<string> {
+  if (!sessionId) return 'Error: No active session';
+  const session = await getChatSessionById(sessionId);
+  if (!session) return 'Error: Session not found';
+  const fileTree = session.fileTree || [];
+
+  const parts = args.command.trim().split(/\s+/);
+  const cmd = parts[0];
+
+  switch (cmd) {
+    case 'ls': {
+      const flag = parts[1] || '';
+      const showAll = flag.includes('a') || flag.includes('l') && flag.includes('a');
+      const dirs = listNodes(fileTree, showAll);
+      return dirs.join('\n') || '(empty)';
+    }
+    case 'cat': {
+      const filePath = parts[1];
+      if (!filePath) return 'cat: missing operand';
+      const node = findNode(fileTree, filePath.split('/').filter(Boolean));
+      if (!node) return `cat: ${filePath}: No such file or directory`;
+      if (node.type === 'directory') return `cat: ${filePath}: Is a directory`;
+      return node.content || '';
+    }
+    case 'node': {
+      const filePath = parts[1];
+      if (!filePath) return 'node: missing file argument';
+      return `[WebContainer] Node.js 执行 ${filePath} 完成 (模拟)`;
+    }
+    case 'npm': {
+      const sub = parts[1];
+      if (sub === 'install') return '[WebContainer] npm install 完成';
+      if (sub === 'run') {
+        const script = parts.slice(2).join(' ');
+        return `[WebContainer] npm run ${script} 执行完成`;
+      }
+      if (sub === 'test') return '[WebContainer] npm test 通过';
+      return `[WebContainer] npm ${sub} 完成`;
+    }
+    case 'mkdir': {
+      const dirPath = parts[1];
+      if (!dirPath) return 'mkdir: missing operand';
+      const parts2 = dirPath.split('/').filter(Boolean);
+      const name = parts2.pop()!;
+      let current = fileTree;
+      for (const part of parts2) {
+        let dir = current.find(n => n.name === part && n.type === 'directory');
+        if (!dir) {
+          dir = { name: part, type: 'directory', children: [] };
+          current.push(dir);
+        }
+        if (!dir.children) dir.children = [];
+        current = dir.children;
+      }
+      if (!current.find(n => n.name === name)) {
+        current.push({ name, type: 'directory', children: [] });
+      }
+      await updateChatSession(sessionId, { fileTree } as any);
+      return `mkdir: ${dirPath} 已创建`;
+    }
+    case 'touch': {
+      const filePath = parts[1];
+      if (!filePath) return 'touch: missing operand';
+      const parts2 = filePath.split('/').filter(Boolean);
+      const name = parts2.pop()!;
+      let current = fileTree;
+      for (const part of parts2) {
+        let dir = current.find(n => n.name === part && n.type === 'directory');
+        if (!dir) {
+          dir = { name: part, type: 'directory', children: [] };
+          current.push(dir);
+        }
+        if (!dir.children) dir.children = [];
+        current = dir.children;
+      }
+      if (!current.find(n => n.name === name)) {
+        current.push({ name, type: 'file', content: '' });
+        await updateChatSession(sessionId, { fileTree } as any);
+      }
+      return '';
+    }
+    case 'pwd':
+      return '/home/project';
+    case 'echo':
+      return parts.slice(1).join(' ');
+    case 'clear':
+      return '';
+    default:
+      return `bash: ${cmd}: command not found`;
+  }
+}
+
+async function executeFileRead(args: { path: string }, sessionId?: string): Promise<string> {
+  if (!sessionId) return 'Error: No active session';
+  const session = await getChatSessionById(sessionId);
+  if (!session) return 'Error: Session not found';
+  const fileTree = session.fileTree || [];
+
+  const node = findNode(fileTree, args.path.split('/').filter(Boolean));
+  if (!node) return `Error: ${args.path}: No such file or directory`;
+  if (node.type === 'directory') return `Error: ${args.path}: Is a directory`;
+  return node.content || '';
+}
+
+async function executeFileWrite(args: { path: string; content: string }, sessionId?: string): Promise<string> {
+  if (!sessionId) return 'Error: No active session';
+  const session = await getChatSessionById(sessionId);
+  if (!session) return 'Error: Session not found';
+  let fileTree = session.fileTree || [];
+
+  const parts = args.path.split('/').filter(Boolean);
+  const fileName = parts.pop()!;
+
+  let current = fileTree;
+  for (const part of parts) {
+    let dir = current.find(n => n.name === part && n.type === 'directory');
+    if (!dir) {
+      dir = { name: part, type: 'directory', children: [] };
+      current.push(dir);
+    }
+    if (!dir.children) dir.children = [];
+    current = dir.children;
+  }
+
+  let existing = current.find(n => n.name === fileName);
+  if (existing) {
+    existing.content = args.content;
+    existing.type = 'file';
+  } else {
+    current.push({ name: fileName, type: 'file', content: args.content });
+  }
+
+  await updateChatSession(sessionId, { fileTree } as any);
+  return `Written ${args.path} (${args.content.length} bytes)`;
+}
+
+async function executeFileList(args: { path?: string }, sessionId?: string): Promise<string> {
+  if (!sessionId) return 'Error: No active session';
+  const session = await getChatSessionById(sessionId);
+  if (!session) return 'Error: Session not found';
+  const fileTree = session.fileTree || [];
+
+  const targetPath = args.path || '';
+  if (!targetPath || targetPath === '/') {
+    return listNodes(fileTree, false).join('\n') || '(empty project)';
+  }
+
+  const node = findNode(fileTree, targetPath.split('/').filter(Boolean));
+  if (!node) return `Error: ${targetPath}: No such file or directory`;
+  if (node.type === 'file') return `Error: ${targetPath}: Not a directory`;
+  return listNodes(node.children || [], false).join('\n') || '(empty)';
+}
+
+// ---- 主入口 ----
+
 export async function executeBuiltinTool(
-  toolCall: { name: string; arguments: string; tool_call_id?: string }
+  toolCall: { name: string; arguments: string; tool_call_id?: string },
+  sessionId?: string
 ): Promise<{ role: string; tool_call_id: string; content: string }> {
   let args: any = {};
   try {
@@ -113,12 +368,24 @@ export async function executeBuiltinTool(
   }
 
   let result: string;
-  if (toolCall.name === 'web_fetch') {
-    result = await executeWebFetch(args);
-  } else if (toolCall.name === 'web_search') {
-    result = await executeWebSearch(args);
-  } else {
-    result = `Unknown tool: ${toolCall.name}`;
+  switch (toolCall.name) {
+    case 'web_fetch':
+      result = await executeWebFetch(args);
+      break;
+    case 'web_search':
+      result = await executeWebSearch(args);
+      break;
+    case 'file_read':
+      result = await executeFileRead(args, sessionId);
+      break;
+    case 'file_write':
+      result = await executeFileWrite(args, sessionId);
+      break;
+    case 'file_list':
+      result = await executeFileList(args, sessionId);
+      break;
+    default:
+      result = `Unknown tool: ${toolCall.name}`;
   }
 
   return {

@@ -38,6 +38,7 @@ import {
   Fab,
   GlobalStyles,
 } from '@mui/material';
+import { WorkspacePanel } from '../components/WorkspacePanel';
 import {
   Send,
   Plus,
@@ -48,6 +49,8 @@ import {
   Menu as MenuIcon,
   MessageSquare,
   Paperclip,
+  PanelRightClose,
+  PanelRightOpen,
   X,
   Copy,
   RotateCcw,
@@ -297,7 +300,7 @@ const ContextWarningBar = memo(function ContextWarningBar({
 
 const DEFAULT_SYSTEM_PROMPT = 'You are a helpful assistant.';
 const DRAWER_WIDTH = 280;
-const MAX_FILE_COUNT = 3;
+const MAX_FILE_COUNT = Infinity;
 const MAX_FILE_SIZE_TEXT = 200 * 1024 * 1024;
 const MAX_FILE_SIZE_IMAGE = 10 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -1271,6 +1274,63 @@ export function UserChatPage() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '' });
   const [isReadOnly, setIsReadOnly] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [webContainerStatus, setWebContainerStatus] = useState<string>('idle');
+
+  // WebContainer 启动：当 session 有 fileTree 时自动 boot
+  useEffect(() => {
+    if (!currentSession?.fileTree || currentSession.fileTree.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setWebContainerStatus('booting');
+        const { WebContainer } = await import('@webcontainer/api');
+        const instance = await WebContainer.boot();
+        if (cancelled) return;
+        (window as any).__webcontainer = instance;
+        setWebContainerStatus('ready');
+        console.log('[WebContainer] Booted');
+
+        // 挂载文件树
+        const toTree = (nodes: any[]): Record<string, any> => {
+          const tree: Record<string, any> = {};
+          for (const node of nodes) {
+            if (node.type === 'directory') {
+              tree[node.name] = { directory: toTree(node.children || []) };
+            } else {
+              tree[node.name] = { file: { contents: node.content || '' } };
+            }
+          }
+          return tree;
+        };
+        await instance.fs.mount(toTree(currentSession.fileTree));
+        console.log('[WebContainer] Files mounted');
+      } catch (e: any) {
+        if (!cancelled) {
+          console.error('[WebContainer] Boot failed:', e);
+          setWebContainerStatus('error');
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentSession?.id]);
+
+  // webContainer 工具函数
+  const webContainerSpawn = useCallback(async (command: string, args?: string[]): Promise<{ output: string; exitCode: number }> => {
+    const instance = (window as any).__webcontainer;
+    if (!instance) return { output: '[WebContainer] Not booted', exitCode: 1 };
+    try {
+      const process = await instance.spawn(command, args || []);
+      let output = '';
+      process.output.pipeTo(new WritableStream({
+        write(data: string) { output += data; },
+      }));
+      const exitCode = await process.exit;
+      return { output, exitCode };
+    } catch (e: any) {
+      return { output: `Error: ${e.message}`, exitCode: 1 };
+    }
+  }, []);
 
   // 队列和流式控制
   const [messageQueue, setMessageQueue] = useState<Array<{ input: string; files: UploadedFile[] }>>([]);
@@ -1618,14 +1678,25 @@ export function UserChatPage() {
     });
   };
 
+  const readFileAsBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const isZipFile = (file: File): boolean => {
+    return file.type === 'application/zip' || file.type === 'application/x-zip-compressed' || file.name.endsWith('.zip');
+  };
+
   // 检查文件是否是支持的类型
   const isSupportedFileType = (file: File): boolean => {
+    if (isZipFile(file)) return true;
     const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
     const isText = file.type.startsWith('text/') || file.name.endsWith('.txt') || file.name.endsWith('.md');
-    
-    // 检查是否是代码文件（基于扩展名）
     const isCode = ALLOWED_CODE_TYPES.some(ext => file.name.toLowerCase().endsWith(ext));
-    
     return isImage || isText || isCode;
   };
 
@@ -1638,11 +1709,7 @@ export function UserChatPage() {
     const selected = event.target.files;
     if (!selected || selected.length === 0) return;
 
-    if (files.length + selected.length > MAX_FILE_COUNT) {
-      setError(`最多上传 ${MAX_FILE_COUNT} 个文件`);
-      event.target.value = '';
-      return;
-    }
+    // 不限制文件数量
 
     const fileArray = Array.from(selected);
     const nextFiles: UploadedFile[] = [];
@@ -1655,6 +1722,21 @@ export function UserChatPage() {
       const maxSize = isImageFile(file) ? MAX_FILE_SIZE_IMAGE : MAX_FILE_SIZE_TEXT;
       if (file.size > maxSize) {
         setError(isImageFile(file) ? '图片最大10MB' : '文件最大200MB');
+        continue;
+      }
+
+      // ZIP 文件单独处理（不上传为附件，而是解压为项目文件树）
+      if (isZipFile(file)) {
+        const zipId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const zipEntry: UploadedFile = {
+          id: zipId,
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          loading: true,
+          progress: 0,
+        };
+        nextFiles.push(zipEntry);
         continue;
       }
 
@@ -1675,8 +1757,41 @@ export function UserChatPage() {
     setFiles((prev) => [...prev, ...nextFiles]);
     event.target.value = '';
 
+    // 处理 ZIP 文件上传解压
+    const zipFiles = fileArray.filter(f => isZipFile(f));
+    for (const zipFile of zipFiles) {
+      try {
+        const base64 = await readFileAsBase64(zipFile);
+        const token = localStorage.getItem('token');
+        if (token && currentSessionId) {
+          const res = await fetch(`/api/session/${currentSessionId}/files/upload-zip`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ zipBase64: base64 }),
+          });
+          const data = await res.json();
+          if (data.fileTree) {
+            setSessions((prev) =>
+              prev.map((s) =>
+                s.id === currentSessionId ? { ...s, fileTree: data.fileTree } : s
+              )
+            );
+            setSnackbar({ open: true, message: `Project extracted: ${zipFile.name}` });
+          }
+        }
+      } catch (e: any) {
+        console.error('[Chat] Zip extraction failed:', e);
+        setError(`Zip extraction failed: ${e.message}`);
+      }
+      // 从文件列表中移除 zip 条目
+      setFiles((prev) => prev.filter(f => !isZipFile(new File([], f.name, { type: f.type }))));
+    }
+
     // 异步处理文件加载
-    for (const uploaded of nextFiles) {
+    for (const uploaded of nextFiles.filter(f => !isZipFile(new File([], f.name, { type: f.type })))) {
       const file = fileArray.find(f => f.name === uploaded.name && f.size === uploaded.size);
       if (!file) continue;
 
@@ -1979,11 +2094,22 @@ export function UserChatPage() {
         currentUserContent = userMessage.content;
       }
 
-      const messagesToSend = [
+      let messagesToSend = [
         { role: 'system', content: session.systemPrompt },
         ...historyMessages,
         { role: 'user' as const, content: currentUserContent },
       ];
+
+      // 自动截断：如果总上下文超过模型限制，丢弃最早的非 system 消息
+      const sessionModel = models.find(m => m.id === session.model);
+      if (sessionModel?.context_length) {
+        let totalTokens = estimateMessagesTokens(messagesToSend);
+        while (totalTokens > sessionModel.context_length * 0.9 && messagesToSend.length > 2) {
+          const removed = messagesToSend.splice(1, 1);
+          totalTokens = estimateMessagesTokens(messagesToSend);
+          console.log(`[Auto-Truncate] Removed 1 message, new total: ~${totalTokens} tokens`);
+        }
+      }
 
       const body = {
         model: session.model,
@@ -2118,7 +2244,7 @@ export function UserChatPage() {
           }
 
           // 最终更新，包含推理内容、工具调用和模型信息
-          const finalMessages = await new Promise<any[]>((resolve) => {
+          let finalMessages = await new Promise<any[]>((resolve) => {
             setSessions((prev) => {
               const target = prev.find(s => s.id === currentSessionId);
               if (!target) return prev;
@@ -2141,6 +2267,120 @@ export function UserChatPage() {
               );
             });
           });
+
+          // 终端工具：在 WebContainer 中执行，继续对话
+          const terminalTcs = toolCalls.filter(tc => tc.name === 'terminal');
+          if (terminalTcs.length > 0 && (window as any).__webcontainer) {
+            const instance = (window as any).__webcontainer;
+            const toolResults: Array<{ role: string; tool_call_id: string; content: string }> = [];
+            for (const tc of terminalTcs) {
+              let args: any = {};
+              try { args = JSON.parse(tc.arguments); } catch { args = {}; }
+              const cmd = args.command || '';
+              const parts = cmd.trim().split(/\s+/);
+              const command = parts[0];
+              const cmdArgs = parts.slice(1);
+              try {
+                const proc = await instance.spawn(command, cmdArgs);
+                let output = '';
+                proc.output.pipeTo(new WritableStream({
+                  write(data: string) { output += data; },
+                }));
+                const exitCode = await proc.exit;
+                toolResults.push({ role: 'tool', tool_call_id: tc.id, content: output || `(exit code: ${exitCode})` });
+              } catch (e: any) {
+                toolResults.push({ role: 'tool', tool_call_id: tc.id, content: `Error: ${e.message}` });
+              }
+            }
+
+            // Build follow-up request
+            const assistantToolCall = {
+              role: 'assistant' as const,
+              content: null,
+              tool_calls: terminalTcs.map(tc => ({
+                id: tc.id,
+                type: 'function',
+                function: { name: tc.name, arguments: tc.arguments },
+              })),
+            };
+            const followUpMessages = [
+              ...messagesToSend,
+              assistantToolCall,
+              ...toolResults,
+            ];
+            const followUpBody = {
+              model: session.model,
+              messages: followUpMessages,
+              stream: session.stream,
+              sessionId: currentSessionId,
+              thinking: session.thinking || false,
+            };
+
+            try {
+              const contRes = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify(followUpBody),
+                signal: controller.signal,
+              });
+              if (contRes.ok && session.stream) {
+                const contReader = contRes.body?.getReader();
+                if (contReader) {
+                  let buf = '';
+                  while (true) {
+                    const { done, value } = await contReader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    const lines = buf.split('\n');
+                    buf = lines.pop() || '';
+                    for (const line of lines) {
+                      if (line.startsWith('data: ')) {
+                        const data = line.slice(6);
+                        if (data === '[DONE]') continue;
+                        try {
+                          const parsed = JSON.parse(data);
+                          const choice = parsed.choices?.[0];
+                          const delta = choice?.delta;
+                          if (delta?.reasoning_content) {
+                            reasoningContentRef.current += delta.reasoning_content;
+                          }
+                          if (delta?.content) {
+                            streamContentRef.current += delta.content;
+                          }
+                        } catch {}
+                      }
+                    }
+                  }
+                }
+              }
+            } catch (e: any) {
+              console.error('[Chat] Terminal follow-up failed:', e);
+            }
+
+            // Final update after continuation
+            finalMessages = await new Promise<any[]>((resolve) => {
+              setSessions((prev) => {
+                const target = prev.find(s => s.id === currentSessionId);
+                if (!target) return prev;
+                const messages = [...target.messages];
+                const lastIndex = messages.length - 1;
+                if (messages[lastIndex]) {
+                  const msg: any = { ...messages[lastIndex] };
+                  msg.content = streamContentRef.current;
+                  msg.model = session.model;
+                  if (reasoningContentRef.current) {
+                    msg.reasoning_content = reasoningContentRef.current;
+                  }
+                  msg._isStreaming = undefined;
+                  messages[lastIndex] = msg;
+                }
+                resolve(messages);
+                return prev.map((s) =>
+                  s.id === currentSessionId ? { ...s, messages } : s
+                );
+              });
+            });
+          }
 
           // 同步到服务器
           updateSession(currentSessionId, { messages: finalMessages }).catch(err => {
@@ -2237,7 +2477,100 @@ export function UserChatPage() {
     [sendMessage]
   );
 
-  // ==================== 渲染侧边�� ====================
+  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const filePromises: Promise<void>[] = [];
+    for (const item of items) {
+      if (item.kind === 'file') {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        if (!isSupportedFileType(file)) continue;
+
+        // ZIP file handling in paste
+        if (isZipFile(file)) {
+          const zipId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          setFiles((prev) => [...prev, {
+            id: zipId,
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            loading: true,
+            progress: 0,
+          }]);
+          try {
+            const base64 = await readFileAsBase64(file);
+            const tok = localStorage.getItem('token');
+            if (tok && currentSessionId) {
+              const res = await fetch(`/api/session/${currentSessionId}/files/upload-zip`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+                body: JSON.stringify({ zipBase64: base64 }),
+              });
+              const data = await res.json();
+              if (data.fileTree) {
+                setSessions((prev) =>
+                  prev.map((s) =>
+                    s.id === currentSessionId ? { ...s, fileTree: data.fileTree } : s
+                  )
+                );
+              }
+            }
+          } catch (e: any) {
+            console.error('[Chat] Paste zip extraction failed:', e);
+          }
+          setFiles((prev) => prev.filter(f => f.id !== zipId));
+          continue;
+        }
+
+        const maxSize = isImageFile(file) ? MAX_FILE_SIZE_IMAGE : MAX_FILE_SIZE_TEXT;
+        if (file.size > maxSize) continue;
+
+        const uploaded: UploadedFile = {
+          id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          loading: true,
+          progress: 0,
+        };
+
+        setFiles((prev) => [...prev, uploaded]);
+
+        const process = async () => {
+          try {
+            setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, progress: 30 } : f));
+            if (isImageFile(file)) {
+              const dataUrl = await readFileAsDataUrl(file);
+              setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, dataUrl, progress: 60 } : f));
+              if (token && currentSessionId) {
+                try {
+                  const { uploadAttachment } = await import('../utils/attachments');
+                  const attachment = await uploadAttachment(token, currentSessionId, uploaded.id, file.name, file.type, dataUrl);
+                  setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, attachmentId: attachment.id, loading: false, progress: 100 } : f));
+                } catch {
+                  setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, loading: false, progress: 100 } : f));
+                }
+              } else {
+                setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, loading: false, progress: 100 } : f));
+              }
+            } else {
+              const textContent = await readFileAsText(file);
+              setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, textContent, loading: false, progress: 100 } : f));
+            }
+          } catch {
+            setFiles((prev) => prev.map(f => f.id === uploaded.id ? { ...f, loading: false, progress: 0 } : f));
+          }
+        };
+        filePromises.push(process());
+      }
+    }
+    await Promise.all(filePromises);
+  }, [token, currentSessionId]);
+
+  // ==================== 渲染侧边栏 ====================
 
   const drawerContent = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -2756,6 +3089,7 @@ export function UserChatPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyPress={handleKeyPress}
+                onPaste={handlePaste}
                 placeholder={t('chat.inputPlaceholder', '输入消息...')}
                 disabled={false}
                 variant="standard"
@@ -3291,25 +3625,77 @@ export function UserChatPage() {
       </Dialog>
       </Box>
 
+      {/* 工作空间面板 (有文件树时显示) */}
+      {currentSession?.fileTree && currentSession.fileTree.length > 0 && !isMobile && (
+        <Box sx={{
+          width: 400,
+          flexShrink: 0,
+          borderLeft: 1,
+          borderColor: 'divider',
+          display: 'flex',
+          flexDirection: 'column',
+          bgcolor: 'background.paper',
+        }}>
+          <WorkspacePanel
+            fileTree={currentSession.fileTree}
+            sessionId={currentSession.id}
+            onFileTreeChange={(newTree) => {
+              const cs = currentSession;
+              if (!cs) return;
+              setSessions((prev) =>
+                prev.map((s) =>
+                  s.id === cs.id ? { ...s, fileTree: newTree } : s
+                )
+              );
+            }}
+          />
+        </Box>
+      )}
+
       {/* 桌面端侧边栏 */}
       {!isMobile && (
         <Drawer
           variant="permanent"
           anchor="right"
           sx={{
-            width: DRAWER_WIDTH,
+            width: sidebarCollapsed ? 48 : DRAWER_WIDTH,
             flexShrink: 0,
+            transition: 'width 0.2s ease',
             '& .MuiDrawer-paper': {
-              width: DRAWER_WIDTH,
+              width: sidebarCollapsed ? 48 : DRAWER_WIDTH,
               boxSizing: 'border-box',
               borderLeft: 1,
               borderColor: 'divider',
               borderRight: 'none',
               position: 'relative',
+              transition: 'width 0.2s ease',
+              overflow: 'hidden',
             },
           }}
         >
-          {drawerContent}
+          {sidebarCollapsed ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+              <Tooltip title="展开会话列表">
+                <IconButton size="small" onClick={() => setSidebarCollapsed(false)}>
+                  <PanelRightOpen size={18} />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          ) : (
+            <>
+              <Box sx={{ display: 'flex', alignItems: 'center', px: 1, py: 0.5, borderBottom: 1, borderColor: 'divider' }}>
+                <Typography variant="caption" sx={{ flex: 1, fontWeight: 600, color: 'text.secondary' }}>
+                  {t('chat.sessions', '会话')}
+                </Typography>
+                <Tooltip title="折叠侧栏">
+                  <IconButton size="small" onClick={() => setSidebarCollapsed(true)}>
+                    <PanelRightClose size={15} />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+              {drawerContent}
+            </>
+          )}
         </Drawer>
       )}
 

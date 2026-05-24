@@ -1,6 +1,13 @@
 import { createContext, useContext, useState, ReactNode, useCallback, useEffect } from 'react';
 import { useAuth } from './AuthContext';
 
+export type FileNode = {
+  name: string;
+  type: 'file' | 'directory';
+  content?: string;
+  children?: FileNode[];
+};
+
 type ChatSession = {
   id: string;
   title: string;
@@ -15,6 +22,7 @@ type ChatSession = {
   isPublic: boolean;
   ownerId: string;
   thinking?: boolean;
+  fileTree?: FileNode[];
   // 权限信息 - 从服务器返回
   isOwner?: boolean;
   isReadOnly?: boolean;
