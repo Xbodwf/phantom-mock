@@ -117,6 +117,7 @@ type ToolCall = {
   name: string;
   arguments: string;
   result?: string;
+  _idx?: number;
 };
 
 type UploadedFile = {
@@ -2246,19 +2247,23 @@ export function UserChatPage() {
                     throttledUpdate();
                   }
 
-                  // 处理工具调用
+                  // 处理工具调用（按 index 聚合，因为流式块中 id 只出现在第一块）
                   if (delta?.tool_calls) {
                     for (const tc of delta.tool_calls) {
-                      const existingIndex = toolCalls.findIndex((t) => t.id === tc.id);
-                      if (existingIndex >= 0) {
+                      const idx = tc.index ?? toolCalls.length;
+                      const existing = toolCalls.find((t) => t._idx === idx);
+                      if (existing) {
                         if (tc.function?.arguments) {
-                          toolCalls[existingIndex].arguments += tc.function.arguments;
+                          existing.arguments += tc.function.arguments;
                         }
-                      } else if (tc.id) {
+                        if (tc.function?.name) existing.name = tc.function.name;
+                        if (tc.id) existing.id = tc.id;
+                      } else {
                         toolCalls.push({
-                          id: tc.id,
+                          id: tc.id || `tc_${idx}`,
                           name: tc.function?.name || '',
                           arguments: tc.function?.arguments || '',
+                          _idx: idx,
                         });
                       }
                     }
