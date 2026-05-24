@@ -188,7 +188,7 @@ async function streamWithBuiltinTools(
     console.log('[streamWithBuiltinTools] URL:', url, 'Key:', apiKey.slice(0, 8) + '...');
 
     // 收集本轮工具调用（keyed by index）
-    const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
+    const toolCallBuffers = new Map<number, { id: string; name: string; args: string; extra?: any }>();
     let currentReasoning = '';
     let finishReason: string | null = null;
 
@@ -262,11 +262,11 @@ async function streamWithBuiltinTools(
                 }
 
                 if (delta.tool_calls) {
-                  console.log('[streamWithBuiltinTools] Tool calls detected:', JSON.stringify(delta.tool_calls));
+                  console.log('[streamWithBuiltinTools] Tool calls detected:', delta.tool_calls.length);
                   for (const tc of delta.tool_calls) {
                     const idx = tc.index;
                     if (!toolCallBuffers.has(idx)) {
-                      toolCallBuffers.set(idx, { id: tc.id || '', name: tc.function?.name || '', args: '' });
+                      toolCallBuffers.set(idx, { id: tc.id || '', name: tc.function?.name || '', args: '', extra: (tc as any).extra_content });
                     }
                     const buf = toolCallBuffers.get(idx)!;
                     if (tc.id) buf.id = tc.id;
@@ -331,17 +331,18 @@ async function streamWithBuiltinTools(
           })}\n\n`);
         }
 
-        // 检查工具调用
-        if (msg.tool_calls) {
-          console.log('[streamWithBuiltinTools] Tool calls in non-stream response:', msg.tool_calls.length);
-          for (const tc of msg.tool_calls) {
-            toolCallBuffers.set(tc.index || 0, {
-              id: tc.id || '',
-              name: tc.function?.name || '',
-              args: tc.function?.arguments || '',
-            });
-          }
+      // 检查工具调用
+      if (msg.tool_calls) {
+        console.log('[streamWithBuiltinTools] Tool calls in non-stream response:', msg.tool_calls.length);
+        for (const tc of msg.tool_calls) {
+          toolCallBuffers.set(tc.index || 0, {
+            id: tc.id || '',
+            name: tc.function?.name || '',
+            args: tc.function?.arguments || '',
+            extra: (tc as any).extra_content,
+          });
         }
+      }
 
         finishReason = choice?.finish_reason || null;
       }
@@ -388,11 +389,15 @@ async function streamWithBuiltinTools(
     newMessages.push({
       role: 'assistant',
       content: null,
-      tool_calls: toolCalls.map(tc => ({
-        id: tc.id,
-        type: 'function',
-        function: { name: tc.name, arguments: tc.args },
-      })),
+      tool_calls: toolCalls.map(tc => {
+        const entry: any = {
+          id: tc.id,
+          type: 'function',
+          function: { name: tc.name, arguments: tc.args },
+        };
+        if (tc.extra) entry.extra_content = tc.extra;
+        return entry;
+      }),
     });
     for (const r of toolResults) newMessages.push(r);
     currentBody = { ...currentBody, messages: newMessages, stream: false };
