@@ -165,6 +165,7 @@ function formatContextLength(length: number): string {
 
 // 粗略估算消息的token数（中文约1.5字/token，英文约4字/token）
 function estimateTokens(text: string): number {
+  if (typeof text !== 'string') return 0;
   const cjkChars = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g) || []).length;
   const asciiChars = text.length - cjkChars;
   return Math.ceil(cjkChars * 1.5 + asciiChars / 4);
@@ -174,8 +175,12 @@ function estimateTokens(text: string): number {
 function estimateMessagesTokens(messages: any[]): number {
   let total = 0;
   for (const msg of messages) {
-    if (msg.content) {
+    if (typeof msg.content === 'string') {
       total += estimateTokens(msg.content);
+    } else if (Array.isArray(msg.content)) {
+      for (const part of msg.content) {
+        if (part.text) total += estimateTokens(part.text);
+      }
     }
     if (msg.reasoning_content) {
       total += estimateTokens(msg.reasoning_content);
