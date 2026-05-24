@@ -2307,26 +2307,30 @@ export function UserChatPage() {
 
           // 终端工具：在 WebContainer 中执行，继续对话
           const terminalTcs = toolCalls.filter(tc => tc.name === 'terminal');
-          if (terminalTcs.length > 0 && (window as any).__webcontainer) {
+          if (terminalTcs.length > 0) {
             const instance = (window as any).__webcontainer;
             const toolResults: Array<{ role: string; tool_call_id: string; content: string }> = [];
             for (const tc of terminalTcs) {
               let args: any = {};
               try { args = JSON.parse(tc.arguments); } catch { args = {}; }
               const cmd = args.command || '';
-              const parts = cmd.trim().split(/\s+/);
-              const command = parts[0];
-              const cmdArgs = parts.slice(1);
-              try {
-                const proc = await instance.spawn(command, cmdArgs);
-                let output = '';
-                proc.output.pipeTo(new WritableStream({
-                  write(data: string) { output += data; },
-                }));
-                const exitCode = await proc.exit;
-                toolResults.push({ role: 'tool', tool_call_id: tc.id, content: output || `(exit code: ${exitCode})` });
-              } catch (e: any) {
-                toolResults.push({ role: 'tool', tool_call_id: tc.id, content: `Error: ${e.message}` });
+              if (instance) {
+                const parts = cmd.trim().split(/\s+/);
+                const command = parts[0];
+                const cmdArgs = parts.slice(1);
+                try {
+                  const proc = await instance.spawn(command, cmdArgs);
+                  let output = '';
+                  proc.output.pipeTo(new WritableStream({
+                    write(data: string) { output += data; },
+                  }));
+                  const exitCode = await proc.exit;
+                  toolResults.push({ role: 'tool', tool_call_id: tc.id, content: output || `(exit code: ${exitCode})` });
+                } catch (e: any) {
+                  toolResults.push({ role: 'tool', tool_call_id: tc.id, content: `Error: ${e.message}` });
+                }
+              } else {
+                toolResults.push({ role: 'tool', tool_call_id: tc.id, content: `Error: WebContainer not available. Please ensure a project is loaded (upload a zip or create files first).` });
               }
             }
 
@@ -2387,6 +2391,8 @@ export function UserChatPage() {
                         } catch {}
                       }
                     }
+                    // 渐进更新 UI
+                    updateContent();
                   }
                 }
               }
