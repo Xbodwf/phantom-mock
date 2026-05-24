@@ -24,6 +24,9 @@ export interface ChatCompletionRequest {
   stop?: string | string[];
   n?: number;
   user?: string;
+  tools?: any[];
+  functions?: any[];
+  tool_choice?: any;
 }
 
 export interface ApiUrlTemplates {

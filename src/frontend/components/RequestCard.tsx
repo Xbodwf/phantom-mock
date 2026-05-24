@@ -1279,6 +1279,64 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
                   <Wrench size={16} /> 工具调用
                 </Typography>
 
+                {/* 客户端请求中定义的可用工具列表 */}
+                {req.tools && req.tools.length > 0 && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                      客户端可用工具（点击名称自动填充）:
+                    </Typography>
+                    <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                      {req.tools.map((tool: any, i: number) => {
+                        const name = tool.function?.name || tool.name || `tool_${i}`;
+                        return (
+                          <Chip
+                            key={i}
+                            size="small"
+                            label={name}
+                            variant="outlined"
+                            onClick={() => {
+                              setToolCalls(prev => {
+                                const next = [...prev];
+                                if (next[0]) next[0] = { ...next[0], name };
+                                return next;
+                              });
+                            }}
+                            sx={{ cursor: 'pointer', mb: 0.5 }}
+                          />
+                        );
+                      })}
+                    </Stack>
+                  </Box>
+                )}
+                {req.functions && req.functions.length > 0 && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                      客户端可用函数（已弃用，建议使用 tools）:
+                    </Typography>
+                    <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                      {req.functions.map((fn: any, i: number) => {
+                        const name = fn.name || `func_${i}`;
+                        return (
+                          <Chip
+                            key={i}
+                            size="small"
+                            label={name}
+                            variant="outlined"
+                            onClick={() => {
+                              setToolCalls(prev => {
+                                const next = [...prev];
+                                if (next[0]) next[0] = { ...next[0], name };
+                                return next;
+                              });
+                            }}
+                            sx={{ cursor: 'pointer', mb: 0.5 }}
+                          />
+                        );
+                      })}
+                    </Stack>
+                  </Box>
+                )}
+
                 {toolCalls.map((tc, index) => (
                   <Paper
                     key={index}
