@@ -143,6 +143,7 @@ type ChatSession = {
   updatedAt: number;
   isPublic?: boolean;
   ownerId?: string;
+  thinking?: boolean;
   isOwner?: boolean;
   isReadOnly?: boolean;
 };
@@ -1565,6 +1566,22 @@ export function UserChatPage() {
     [currentSessionId]
   );
 
+  // 快捷更新思考模式
+  const updateCurrentThinking = useCallback(
+    (thinking: boolean) => {
+      if (!currentSessionId) return;
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id === currentSessionId) {
+            return { ...s, thinking, updatedAt: Date.now() };
+          }
+          return s;
+        })
+      );
+    },
+    [currentSessionId]
+  );
+
   // 快捷更新超时设置
   const updateCurrentTimeout = useCallback(
     (timeout: number) => {
@@ -1972,7 +1989,8 @@ export function UserChatPage() {
         model: session.model,
         messages: messagesToSend,
         stream: session.stream,
-        sessionId: currentSessionId, // 包含会话ID以便后端自动保存消息
+        sessionId: currentSessionId,
+        thinking: session.thinking || false,
       };
 
       const response = await fetch('/api/chat', {
@@ -2955,6 +2973,26 @@ export function UserChatPage() {
             disabled={isReadOnly}
           />
         </Box>
+
+        {/* 思考模式（仅对支持 thinking 的模型显示） */}
+        {(() => {
+          const selectedModel = models.find(m => m.id === currentSession?.model);
+          const hasThinking = selectedModel?.supported_features?.includes('thinking');
+          return hasThinking ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+              <Brain size={18} style={{ marginRight: 8 }} />
+              <Typography variant="body2" sx={{ flex: 1 }}>
+                {t('chat.thinking', '思考模式')}
+              </Typography>
+              <Switch
+                size="small"
+                checked={currentSession?.thinking ?? false}
+                onChange={(e) => updateCurrentThinking(e.target.checked)}
+                disabled={isReadOnly}
+              />
+            </Box>
+          ) : null;
+        })()}
 
         {/* 公开会话 */}
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>

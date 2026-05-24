@@ -266,21 +266,26 @@ router.post('/', async (req: Request, res: Response) => {
  isStream: true,
  createdAt: Date.now(),
  resolve: () => {},
- streamController: {
- enqueue: (content: string) => {
- if (!streamEnded) {
- res.write(`data: ${JSON.stringify(buildResponsesStreamChunk(content))}\n\n`);
- }
- },
- close: () => {
- if (!streamEnded) {
- streamEnded = true;
- res.write(`data: ${JSON.stringify(buildResponsesStreamDone(requestId))}\n\n`);
- res.write('data: [DONE]\n\n');
- res.end();
- }
- },
- },
+  streamController: {
+  enqueue: (content: string) => {
+  if (!streamEnded) {
+  res.write(`data: ${JSON.stringify(buildResponsesStreamChunk(content))}\n\n`);
+  }
+  },
+  writeRaw: (sseChunk: string) => {
+  if (!streamEnded) {
+  res.write(sseChunk);
+  }
+  },
+  close: () => {
+  if (!streamEnded) {
+  streamEnded = true;
+  res.write(`data: ${JSON.stringify(buildResponsesStreamDone(requestId))}\n\n`);
+  res.write('data: [DONE]\n\n');
+  res.end();
+  }
+  },
+  },
  };
 
  addPendingRequest(pending);

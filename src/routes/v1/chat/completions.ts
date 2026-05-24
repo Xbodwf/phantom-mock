@@ -631,21 +631,26 @@ async function handleChatRequest(
  isStream: true,
  createdAt: Date.now(),
  resolve: () => {},
- streamController: {
- enqueue: (content: string) => {
- if (!streamEnded) {
- res.write(buildStreamChunk(requestId, body.model, content, false));
- }
- },
- close: () => {
- if (!streamEnded) {
- streamEnded = true;
- res.write(buildStreamChunk(requestId, body.model, '', false, true));
- res.write(buildStreamDone());
- res.end();
- }
- },
- },
+  streamController: {
+  enqueue: (content: string) => {
+  if (!streamEnded) {
+  res.write(buildStreamChunk(requestId, body.model, content, false));
+  }
+  },
+  writeRaw: (sseChunk: string) => {
+  if (!streamEnded) {
+  res.write(sseChunk);
+  }
+  },
+  close: () => {
+  if (!streamEnded) {
+  streamEnded = true;
+  res.write(buildStreamChunk(requestId, body.model, '', false, true));
+  res.write(buildStreamDone());
+  res.end();
+  }
+  },
+  },
  requestParams,
  };
 

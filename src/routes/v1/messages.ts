@@ -246,24 +246,29 @@ router.post('/', async (req: Request, res: Response) => {
  createdAt: Date.now(),
  resolve: () => {},
  requestParams,
- streamController: {
- enqueue: (content: string) => {
- if (!streamEnded) {
- chunks.push(content);
- res.write(`event: content_block_delta\ndata: ${JSON.stringify({
- type: 'content_block_delta',
- index:0,
- delta: { type: 'text_delta', text: content }
- })}\n\n`);
- }
- },
- close: () => {
- if (!streamEnded) {
- removePendingRequest(requestId);
- writeStreamStop();
- }
- }
- }
+  streamController: {
+  enqueue: (content: string) => {
+  if (!streamEnded) {
+  chunks.push(content);
+  res.write(`event: content_block_delta\ndata: ${JSON.stringify({
+  type: 'content_block_delta',
+  index:0,
+  delta: { type: 'text_delta', text: content }
+  })}\n\n`);
+  }
+  },
+  writeRaw: (sseChunk: string) => {
+  if (!streamEnded) {
+  res.write(sseChunk);
+  }
+  },
+  close: () => {
+  if (!streamEnded) {
+  removePendingRequest(requestId);
+  writeStreamStop();
+  }
+  }
+  }
  };
 
  addPendingRequest(pending);

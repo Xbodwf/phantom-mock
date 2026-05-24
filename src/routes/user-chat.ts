@@ -6,13 +6,14 @@ import { broadcastRequest, getConnectedClientsCount } from '../websocket.js';
 import { hasReverseClients, broadcastRequestToReverseClients } from '../reverseWebSocket.js';
 import { getModel, getUserById, updateUser, createUsageRecord, getAllModels, getNodeById, selectProviderKeyRoundRobin, getProviderById } from '../storage.js';
 import { calculateCost, calculateTokens } from '../billing.js';
-import { forwardChatRequest, forwardStreamRequest, isModelForwardingConfigured, shouldUseNodeForwarding, hideKey, resolveForwardUrl, getForwardModelName } from '../forwarder.js';
+import { forwardChatRequest, forwardStreamRequest, isModelForwardingConfigured, shouldUseNodeForwarding, hideKey, resolveForwardUrl, getForwardModelName, forwardImageRequest } from '../forwarder.js';
 import { sendRequestToNode, isNodeConnected } from '../reverseWebSocket.js';
 
 // 存储流式响应的内容（用于会话自动更新）
 const streamContentMap = new Map<string, string>();
 import { getContentString, extractApiKey } from '../routes/v1/utils.js';
 import type { Message } from '../types.js';
+import { BUILTIN_TOOLS, executeBuiltinTool } from '../tools/builtin.js';
 import {
   createChatSession,
   getChatSessionById,
@@ -101,7 +102,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     }
 
     // 验证模型类型
-    const supportedTypes = ['text', 'embedding', 'rerank', 'responses'];
+    const supportedTypes = ['text', 'embedding', 'rerank', 'responses', 'image'];
     if (!supportedTypes.includes(model.type)) {
       return res.status(400).json({
         error: {
@@ -130,6 +131,15 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     // 添加内部 headers，让 completions 路由知道这是内部调用
     req.headers['x-internal-user-id'] = userId;
     req.headers['x-internal-api-key-id'] = apiKeyId;
+
+    // 为 ChatUI 注入内置工具
+    if (!body.tools) body.tools = [];
+    const existingNames = new Set(body.tools.map((t: any) => t.function?.name));
+    for (const tool of BUILTIN_TOOLS) {
+      if (!existingNames.has(tool.function.name)) {
+        body.tools.push(tool);
+      }
+    }
 
     // 处理聊天请求
     await handleUserChatRequest(body, requestId, isStream, res, userId, apiKeyId, model);
@@ -165,6 +175,110 @@ async function handleUserChatRequest(
     n: body.n,
     user: body.user,
   };
+
+  // 图片生成模型处理
+  if (model.type === 'image') {
+    const lastMsg = body.messages?.[body.messages.length - 1];
+    const prompt = getContentString(lastMsg?.content || '').trim();
+    if (!prompt) {
+      return res.status(400).json({
+        error: { message: 'Prompt is required for image generation', type: 'invalid_request_error' }
+      });
+    }
+
+    // 尝试通过上游转发
+    const runtimeModel = model as any;
+    if (isModelForwardingConfigured(runtimeModel)) {
+      try {
+        const result = await forwardImageRequest(runtimeModel, { model: body.model, prompt, n: 1 }, 'imageGenerations');
+        if (result.success) {
+          const images = result.response?.data || [];
+          const imageUrl = images[0]?.url || images[0]?.b64_json || '';
+          const content = imageUrl ? `![generated image](${imageUrl})` : 'No image generated';
+          if (isStream) {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.setHeader('X-Accel-Buffering', 'no');
+            res.write(buildStreamChunk(requestId, body.model, content, true));
+            res.write(buildStreamChunk(requestId, body.model, '', false, true));
+            res.write(buildStreamDone());
+            res.end();
+          } else {
+            return res.json(buildResponse(content, body.model, requestId, prompt));
+          }
+        }
+        console.error('[User Chat] Image forward failed:', result.error);
+      } catch (e) {
+        console.error('[User Chat] Image forward error:', e);
+      }
+    }
+
+    // 转发失败或未配置转发，走管理员手动处理
+    const imageRequest = {
+      model: body.model,
+      prompt,
+      n: 1,
+      size: body.size || '1024x1024',
+      quality: body.quality || 'standard',
+      style: body.style || 'vivid',
+      response_format: body.response_format || 'url',
+      user: body.user,
+    };
+
+    if (isStream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+    }
+
+    const pending: PendingRequest = {
+      requestId,
+      request: { model: body.model, messages: [] },
+      isStream: false,
+      createdAt: Date.now(),
+      resolve: (data: string) => {
+        try {
+          const images = JSON.parse(data);
+          const imageUrl = Array.isArray(images) ? (images[0]?.url || images[0]?.b64_json || '') : '';
+          const content = imageUrl ? `![generated image](${imageUrl})` : 'No image generated';
+          if (isStream) {
+            res.write(buildStreamChunk(requestId, body.model, content, true));
+            res.write(buildStreamChunk(requestId, body.model, '', false, true));
+            res.write(buildStreamDone());
+            res.end();
+          } else {
+            res.json(buildResponse(content, body.model, requestId, prompt));
+          }
+        } catch {
+          res.status(500).json({ error: { message: 'Failed to parse image response', type: 'server_error' } });
+        }
+      },
+      requestType: 'image',
+      imageRequest,
+    };
+
+    addPendingRequest(pending);
+    broadcastRequest(pending);
+
+    const timeout = setTimeout(() => {
+      removePendingRequest(requestId);
+      if (isStream) {
+        res.write(buildStreamChunk(requestId, body.model, '', false, true));
+        res.write(buildStreamDone());
+        res.end();
+      } else {
+        res.json(buildResponse('Image generation timeout', body.model, requestId, prompt));
+      }
+    }, 10 * 60 * 1000);
+
+    res.on('close', () => {
+      clearTimeout(timeout);
+      removePendingRequest(requestId);
+    });
+    return;
+  }
 
   // 检查是否应该通过节点转发
   if (shouldUseNodeForwarding(model)) {
@@ -269,6 +383,11 @@ async function handleUserChatRequest(
                 lastDbFlush = now;
                 flushNodeToDb(totalContent).catch(() => {});
               }
+            }
+          },
+          writeRaw: (sseChunk: string) => {
+            if (!streamEnded) {
+              res.write(sseChunk);
             }
           },
           close: () => {
@@ -443,6 +562,17 @@ async function handleUserChatRequest(
     };
   }
 
+  // 思考模式：通过 body.thinking 控制是否启用思考（仅对非节点转发生效）
+  if (body.thinking && runtimeModel.forwardingMode !== 'node') {
+    runtimeModel = {
+      ...runtimeModel,
+      defaultHeaders: {
+        ...(runtimeModel.defaultHeaders || {}),
+        'thinking_mode': 'true',
+      },
+    };
+  }
+
   const hasForwarding = isModelForwardingConfigured(runtimeModel);
 
   if (hasForwarding) {
@@ -570,37 +700,85 @@ async function handleUserChatRequest(
       }
       return;
     } else {
-      const forwardResult = await forwardChatRequest(runtimeModel, body);
+      // 内置工具执行循环（非流式转发）
+      let currentBody = body;
+      let finalResponse: any = null;
+      const maxToolRounds = 5;
+      let toolRound = 0;
 
-      if (!forwardResult.success) {
-        console.error('[User Chat] Forwarding failed:', forwardResult.error);
-        return res.status(502).json({
-          error: {
-            message: forwardResult.error,
-            type: 'forwarding_error',
-            code: 'forwarding_failed',
-          }
+      while (toolRound < maxToolRounds) {
+        const forwardResult = await forwardChatRequest(runtimeModel, currentBody);
+
+        if (!forwardResult.success) {
+          console.error('[User Chat] Forwarding failed:', forwardResult.error);
+          return res.status(502).json({
+            error: {
+              message: forwardResult.error,
+              type: 'forwarding_error',
+              code: 'forwarding_failed',
+            }
+          });
+        }
+
+        const response = forwardResult.response;
+        const choice = response.choices?.[0];
+        const message = choice?.message;
+
+        // 检查是否有内置工具调用
+        const toolCalls = message?.tool_calls || [];
+        const builtinToolCalls = toolCalls.filter((tc: any) =>
+          BUILTIN_TOOLS.some(t => t.function.name === tc.function?.name)
+        );
+
+        if (builtinToolCalls.length === 0) {
+          finalResponse = response;
+          break;
+        }
+
+        toolRound++;
+        console.log(`[User Chat] Built-in tool round ${toolRound}: ${builtinToolCalls.map((tc: any) => tc.function?.name).join(', ')}`);
+
+        // 执行内置工具
+        const toolResults = await Promise.all(
+          builtinToolCalls.map((tc: any) =>
+            executeBuiltinTool({ name: tc.function.name, arguments: tc.function.arguments })
+          )
+        );
+
+        // 构建新的消息列表
+        const newMessages = [...(currentBody.messages || [])];
+        newMessages.push({
+          role: 'assistant',
+          content: message.content || null,
+          tool_calls: toolCalls,
         });
+        for (const result of toolResults) {
+          newMessages.push(result);
+        }
+
+        currentBody = { ...currentBody, messages: newMessages };
       }
 
-      const response = forwardResult.response;
+      if (!finalResponse) {
+        finalResponse = { choices: [{ message: { role: 'assistant', content: 'Tool execution exceeded maximum rounds' } }] };
+      }
 
       // 记录使用情况（JWT认证用户也要计费）
       if (userId) {
         const cost = calculateCost(
-          response.usage?.prompt_tokens || 0,
-          response.usage?.completion_tokens || 0,
+          finalResponse.usage?.prompt_tokens || 0,
+          finalResponse.usage?.completion_tokens || 0,
           model
         );
 
         await createUsageRecord({
           userId,
-          apiKeyId: apiKeyId || 'jwt-auth', // JWT认证使用虚拟ID
+          apiKeyId: apiKeyId || 'jwt-auth',
           model: body.model,
           endpoint: 'chat',
-          promptTokens: response.usage?.prompt_tokens || 0,
-          completionTokens: response.usage?.completion_tokens || 0,
-          totalTokens: response.usage?.total_tokens || 0,
+          promptTokens: finalResponse.usage?.prompt_tokens || 0,
+          completionTokens: finalResponse.usage?.completion_tokens || 0,
+          totalTokens: finalResponse.usage?.total_tokens || 0,
           cost,
           timestamp: Date.now(),
           requestId,
@@ -610,7 +788,7 @@ async function handleUserChatRequest(
         if (user) {
           await updateUser(userId, {
             balance: user.balance - cost,
-            totalUsage: user.totalUsage + (response.usage?.total_tokens || 0),
+            totalUsage: user.totalUsage + (finalResponse.usage?.total_tokens || 0),
           });
         }
       }
@@ -621,9 +799,8 @@ async function handleUserChatRequest(
           const session = await getChatSessionById(sessionId);
           
           if (session && session.ownerId === userId) {
-            // 从响应中提取AI消息
-            if (response.choices && response.choices[0]?.message) {
-              const aiMessage = response.choices[0].message;
+            if (finalResponse.choices && finalResponse.choices[0]?.message) {
+              const aiMessage = finalResponse.choices[0].message;
               const newMessage: any = {
                 role: aiMessage.role,
                 content: typeof aiMessage.content === 'string' 
@@ -649,7 +826,7 @@ async function handleUserChatRequest(
         }
       }
 
-      return res.json(response);
+      return res.json(finalResponse);
     }
   }
 
@@ -737,6 +914,11 @@ async function handleUserChatRequest(
               lastDbFlush = now;
               flushManualToDb(streamingMessageContent).catch(() => {});
             }
+          }
+        },
+        writeRaw: (sseChunk: string) => {
+          if (!streamEnded) {
+            res.write(sseChunk);
           }
         },
         close: async () => {

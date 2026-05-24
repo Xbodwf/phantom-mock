@@ -112,10 +112,18 @@ function handleClientMessage(ws: WebSocket, msg: WSMessage) {
       if (req.streamController) {
         // 流式：每个 tool call 发送独立 SSE 块，不关闭流（可继续发 text 或更多 tool call）
         const model = req.request?.model || 'unknown';
-        toolCalls.forEach((tc, idx) => {
-          req.streamController!.enqueue(buildToolCallChunk(requestId, model, tc, idx, idx === 0));
-        });
-        req.streamController!.enqueue(buildToolCallFinishChunk(requestId, model));
+        if (req.streamController.writeRaw) {
+          toolCalls.forEach((tc, idx) => {
+            req.streamController!.writeRaw!(buildToolCallChunk(requestId, model, tc, idx, idx === 0));
+          });
+          req.streamController!.writeRaw(buildToolCallFinishChunk(requestId, model));
+        } else {
+          // fallback: enqueue as text
+          toolCalls.forEach((tc, idx) => {
+            req.streamController!.enqueue(buildToolCallChunk(requestId, model, tc, idx, idx === 0));
+          });
+          req.streamController!.enqueue(buildToolCallFinishChunk(requestId, model));
+        }
       } else {
         // 非流式：构建带 tool_calls 的响应对象
         const responseData = {

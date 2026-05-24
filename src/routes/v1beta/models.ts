@@ -465,27 +465,32 @@ async function handleGeminiRequest(
       isStream: true,
       createdAt: Date.now(),
       resolve: () => {},
-      streamController: {
-        enqueue: (content: string) => {
-          if (!streamEnded) {
-            chunks.push(content);
-            const chunk = {
-              candidates: [{
-                content: { parts: [{ text: content }], role: 'model' },
-                finishReason: 'STOP'
-              }]
-            };
-            res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-          }
-        },
-        close: () => {
-          if (!streamEnded) {
-            streamEnded = true;
-            res.write('data: [DONE]\n\n');
-            res.end();
-          }
-        }
-      }
+  streamController: {
+  enqueue: (content: string) => {
+  if (!streamEnded) {
+  chunks.push(content);
+  const chunk = {
+  candidates: [{
+  content: { parts: [{ text: content }], role: 'model' },
+  finishReason: 'STOP'
+  }]
+  };
+  res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+  }
+  },
+  writeRaw: (sseChunk: string) => {
+  if (!streamEnded) {
+  res.write(sseChunk);
+  }
+  },
+  close: () => {
+  if (!streamEnded) {
+  streamEnded = true;
+  res.write('data: [DONE]\n\n');
+  res.end();
+  }
+  }
+  }
     };
 
     addPendingRequest(pending);

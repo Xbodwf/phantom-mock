@@ -1315,20 +1315,21 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
                         const name = fn.name || `tool_${i}`;
                         const args = schemaToTemplate(fn.parameters);
                         return (
-                          <Chip
-                            key={i}
-                            size="small"
-                            label={name}
-                            variant="outlined"
-                            onClick={() => {
-                              setToolCalls(prev => {
-                                const next = [...prev];
-                                if (next[0]) next[0] = { ...next[0], name, arguments: args };
-                                return next;
-                              });
-                            }}
-                            sx={{ cursor: 'pointer', mb: 0.5 }}
-                          />
+                          <Tooltip key={i} title={fn.description || ''} arrow placement="top">
+                            <Chip
+                              size="small"
+                              label={name}
+                              variant="outlined"
+                              onClick={() => {
+                                setToolCalls(prev => {
+                                  const next = [...prev];
+                                  if (next[0]) next[0] = { ...next[0], name, arguments: args };
+                                  return next;
+                                });
+                              }}
+                              sx={{ cursor: 'pointer', mb: 0.5 }}
+                            />
+                          </Tooltip>
                         );
                       })}
                     </Stack>
@@ -1344,20 +1345,21 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
                         const name = fn.name || `func_${i}`;
                         const args = schemaToTemplate(fn.parameters);
                         return (
-                          <Chip
-                            key={i}
-                            size="small"
-                            label={name}
-                            variant="outlined"
-                            onClick={() => {
-                              setToolCalls(prev => {
-                                const next = [...prev];
-                                if (next[0]) next[0] = { ...next[0], name, arguments: args };
-                                return next;
-                              });
-                            }}
-                            sx={{ cursor: 'pointer', mb: 0.5 }}
-                          />
+                          <Tooltip key={i} title={fn.description || ''} arrow placement="top">
+                            <Chip
+                              size="small"
+                              label={name}
+                              variant="outlined"
+                              onClick={() => {
+                                setToolCalls(prev => {
+                                  const next = [...prev];
+                                  if (next[0]) next[0] = { ...next[0], name, arguments: args };
+                                  return next;
+                                });
+                              }}
+                              sx={{ cursor: 'pointer', mb: 0.5 }}
+                            />
+                          </Tooltip>
                         );
                       })}
                     </Stack>

@@ -14,6 +14,7 @@ type ChatSession = {
   updatedAt: number;
   isPublic: boolean;
   ownerId: string;
+  thinking?: boolean;
   // 权限信息 - 从服务器返回
   isOwner?: boolean;
   isReadOnly?: boolean;

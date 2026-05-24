@@ -678,6 +678,7 @@ export interface PendingRequest {
   resolve: (content: string) => void;
   streamController?: {
     enqueue: (chunk: string) => void;
+    writeRaw?: (sseChunk: string) => void;
     close: () => void;
   };
   isStream: boolean;
