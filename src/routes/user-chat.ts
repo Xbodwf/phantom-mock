@@ -208,7 +208,7 @@ async function handleUserChatRequest(
             return res.json(buildResponse(content, body.model, requestId, prompt));
           }
         }
-        console.error('[User Chat] Image forward failed:', result.error);
+        console.error('[User Chat] Image forward failed:', (result as any).error);
       } catch (e) {
         console.error('[User Chat] Image forward error:', e);
       }
