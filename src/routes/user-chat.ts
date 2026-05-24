@@ -780,6 +780,7 @@ async function handleUserChatRequest(
               }
             });
           }
+        }
       }
       return;
     } else {
