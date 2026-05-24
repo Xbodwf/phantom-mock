@@ -91,7 +91,7 @@ export function standardizeErrorResponse(error: any, apiType: string = 'unknown'
 /**
  * 获取模型的有效 API key（支持 provider 模式）
  */
-function getEffectiveApiKey(model: Model): string {
+export function getEffectiveApiKey(model: Model): string {
  let effectiveApiKey = model.api_key || '';
  
  if (model.forwardingMode === 'provider' && model.providerId) {

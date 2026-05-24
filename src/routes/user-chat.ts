@@ -6,14 +6,14 @@ import { broadcastRequest, getConnectedClientsCount } from '../websocket.js';
 import { hasReverseClients, broadcastRequestToReverseClients } from '../reverseWebSocket.js';
 import { getModel, getUserById, updateUser, createUsageRecord, getAllModels, getNodeById, selectProviderKeyRoundRobin, getProviderById } from '../storage.js';
 import { calculateCost, calculateTokens } from '../billing.js';
-import { forwardChatRequest, forwardStreamRequest, isModelForwardingConfigured, shouldUseNodeForwarding, hideKey, resolveForwardUrl, getForwardModelName, forwardImageRequest } from '../forwarder.js';
+import { forwardChatRequest, forwardStreamRequest, isModelForwardingConfigured, shouldUseNodeForwarding, hideKey, resolveForwardUrl, getForwardModelName, getEffectiveApiKey, mergeHeaders, forwardImageRequest } from '../forwarder.js';
 import { sendRequestToNode, isNodeConnected } from '../reverseWebSocket.js';
 
 // 存储流式响应的内容（用于会话自动更新）
 const streamContentMap = new Map<string, string>();
 import { getContentString, extractApiKey } from '../routes/v1/utils.js';
 import type { Message } from '../types.js';
-import { BUILTIN_TOOLS, executeBuiltinTool, hasBuiltinTools } from '../tools/builtin.js';
+import { BUILTIN_TOOLS, BUILTIN_TOOL_NAMES, executeBuiltinTool, hasBuiltinTools } from '../tools/builtin.js';
 import {
   createChatSession,
   getChatSessionById,
@@ -154,6 +154,149 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     });
   }
 });
+
+/**
+ * 流式转发 + 内置工具拦截
+ * 1. 透传 text delta 给客户端
+ * 2. 检测到 tool_calls 时 buffering，不转发 finish_reason
+ * 3. stream 结束后执行工具，自动发起 follow-up 请求
+ * 4. follow-up 的结果继续流式输出给客户端
+ */
+async function streamWithBuiltinTools(
+  runtimeModel: any,
+  body: any,
+  res: any,
+  requestId: string,
+): Promise<string> {
+  const { default: axios } = await import('axios');
+
+  let allContent = '';
+  const forwardModel = getForwardModelName(runtimeModel, body.model);
+  let currentBody = { ...body, stream: true, model: forwardModel };
+  const maxRounds = 5;
+
+  for (let round = 0; round < maxRounds; round++) {
+    const url = resolveForwardUrl(runtimeModel, 'chat', body.model, forwardModel);
+    const apiKey = getEffectiveApiKey(runtimeModel);
+    const headers = mergeHeaders(runtimeModel.defaultHeaders, {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    });
+
+    // 收集本轮工具调用（keyed by index）
+    const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
+    let currentReasoning = '';
+    let finishReason: string | null = null;
+
+    const response = await axios.post(url, currentBody, {
+      headers,
+      timeout: 120000,
+      responseType: 'stream',
+    });
+
+    await new Promise<void>((resolveStream, rejectStream) => {
+      let buffer = '';
+
+      response.data.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(data);
+            const choice = parsed.choices?.[0];
+            if (!choice) continue;
+
+            const delta = choice.delta || {};
+            finishReason = choice.finish_reason || null;
+
+            // 转义 reasoning_content
+            if ((delta as any).reasoning_content) {
+              currentReasoning += (delta as any).reasoning_content;
+            }
+
+            // 文本/推理 delta → 直接转发给客户端（保留 role、reasoning_content 等原始字段）
+            if (delta.content || (delta as any).reasoning_content) {
+              if (delta.content) allContent += delta.content;
+              res.write(`data: ${JSON.stringify({
+                id: requestId,
+                object: 'chat.completion.chunk',
+                created: Math.floor(Date.now() / 1000),
+                model: body.model,
+                choices: [{ index: 0, delta, finish_reason: null }],
+              })}\n\n`);
+            }
+
+            // 工具调用 → buffering（不转发给客户端）
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index;
+                if (!toolCallBuffers.has(idx)) {
+                  toolCallBuffers.set(idx, { id: tc.id || '', name: tc.function?.name || '', args: '' });
+                }
+                const buf = toolCallBuffers.get(idx)!;
+                if (tc.id) buf.id = tc.id;
+                if (tc.function?.name) buf.name = tc.function.name;
+                if (tc.function?.arguments) buf.args += tc.function.arguments;
+              }
+            }
+
+            // 流结束标记（仅记录，不转发 finish chunk — 由外层统一处理）
+          } catch { /* skip parse error */ }
+        }
+      });
+
+      response.data.on('end', () => {
+        resolveStream();
+      });
+
+      response.data.on('error', (err: Error) => {
+        rejectStream(err);
+      });
+    });
+
+    // 没有工具调用 → 结束流
+    if (toolCallBuffers.size === 0) {
+      return allContent;
+    }
+
+    // 有工具调用：不转发 finish_reason 'tool_calls'，直接进入下一轮
+
+    // 有工具调用 → 执行内置工具
+    const toolCalls = Array.from(toolCallBuffers.values()).filter(tc =>
+      BUILTIN_TOOL_NAMES.has(tc.name)
+    );
+
+    if (toolCalls.length === 0) {
+      return allContent;
+    }
+
+    const toolResults = await Promise.all(
+      toolCalls.map(tc => executeBuiltinTool({ name: tc.name, arguments: tc.args }))
+    );
+
+    // 构建 follow-up 消息
+    const newMessages = [...(currentBody.messages || [])];
+    newMessages.push({
+      role: 'assistant',
+      content: null,
+      tool_calls: toolCalls.map(tc => ({
+        id: tc.id,
+        type: 'function',
+        function: { name: tc.name, arguments: tc.args },
+      })),
+    });
+    for (const r of toolResults) newMessages.push(r);
+    currentBody = { ...currentBody, messages: newMessages, stream: true };
+  }
+
+  return allContent;
+}
 
 async function handleUserChatRequest(
   body: any,
@@ -630,67 +773,16 @@ async function handleUserChatRequest(
         }
       };
 
-      // 判断是否包含内置工具 — 需走非流式转发+工具执行循环
+      // 判断是否包含内置工具 — 走流式拦截+工具执行
       const useToolLoop = hasBuiltinTools(body.tools);
 
       if (useToolLoop) {
-        // 非流式转发 + 工具执行循环，再将最终结果流式输出
-        let currentBody = { ...body, stream: false };
-        let finalContent = '';
-        let finalReasoning = '';
-        const maxToolRounds = 5;
-        let toolRound = 0;
-
-        while (toolRound < maxToolRounds) {
-          const forwardResult = await forwardChatRequest(runtimeModel, currentBody);
-
-          if (!forwardResult.success) {
-            streamEnded = true;
-            console.error('[User Chat] Forwarding failed:', forwardResult.error);
-            if (res.headersSent) return;
-            return res.status(502).json({
-              error: { message: forwardResult.error, type: 'forwarding_error', code: 'forwarding_failed' }
-            });
-          }
-
-          const response = forwardResult.response;
-          const choice = response.choices?.[0];
-          const message = choice?.message;
-
-          finalContent = message?.content || '';
-          finalReasoning = message?.reasoning_content || '';
-
-          const toolCalls = message?.tool_calls || [];
-          const builtinToolCalls = toolCalls.filter((tc: any) =>
-            BUILTIN_TOOLS.some(t => t.function.name === tc.function?.name)
-          );
-
-          if (builtinToolCalls.length === 0) break;
-
-          toolRound++;
-          const toolResults = await Promise.all(
-            builtinToolCalls.map((tc: any) =>
-              executeBuiltinTool({ name: tc.function.name, arguments: tc.function.arguments })
-            )
-          );
-
-          const newMessages = [...(currentBody.messages || [])];
-          newMessages.push({
-            role: 'assistant',
-            content: message?.content || null,
-            tool_calls: toolCalls,
-          });
-          for (const r of toolResults) newMessages.push(r);
-          currentBody = { ...currentBody, messages: newMessages, stream: false };
+        try {
+          const allContent = await streamWithBuiltinTools(runtimeModel, body, res, requestId);
+          streamingContent = allContent;
+        } catch (error: any) {
+          console.error('[User Chat] Stream with tools failed:', error.message);
         }
-
-        // 流式输出最终结果
-        if (finalContent) {
-          res.write(buildStreamChunk(requestId, body.model, finalContent, true, false, finalReasoning || null));
-          streamingContent = finalContent;
-          streamingReasoning = finalReasoning;
-        }
-
         streamEnded = true;
         if (sessionId && aiMsgCreated) {
           try {
@@ -701,8 +793,7 @@ async function handleUserChatRequest(
               if (idx !== -1) {
                 msgs[idx] = {
                   ...msgs[idx],
-                  content: finalContent,
-                  reasoning_content: finalReasoning || undefined,
+                  content: streamingContent,
                   _isStreaming: false,
                 };
                 await updateChatSession(sessionId, { messages: msgs, updatedAt: Date.now() });
