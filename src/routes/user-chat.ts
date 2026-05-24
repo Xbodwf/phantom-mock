@@ -194,19 +194,111 @@ async function streamWithBuiltinTools(
 
     let response: any;
     let chunkCount = 0;
-    if (currentBody.stream) {
-      // 流式请求
-      const axiosResp = await axios.post(url, currentBody, {
-        headers,
-        timeout: 120000,
-        responseType: 'stream',
-        validateStatus: (status) => true,
-      });
+    try {
+      if (currentBody.stream) {
+        // 流式请求
+        const axiosResp = await axios.post(url, currentBody, {
+          headers,
+          timeout: 120000,
+          responseType: 'stream',
+          validateStatus: (status) => true,
+        });
 
-      if (axiosResp.status !== 200) {
-        const errBody = typeof axiosResp.data === 'object' ? JSON.stringify(axiosResp.data) : String(axiosResp.data);
-        console.error('[streamWithBuiltinTools] Upstream returned', axiosResp.status, errBody.slice(0, 200));
-        if (round > 0) {
+        if (axiosResp.status !== 200) {
+          const errBody = typeof axiosResp.data === 'object' ? JSON.stringify(axiosResp.data) : String(axiosResp.data);
+          console.error('[streamWithBuiltinTools] Upstream returned', axiosResp.status, errBody.slice(0, 200));
+          if (round > 0) {
+            res.write(`data: ${JSON.stringify({
+              id: requestId,
+              object: 'chat.completion.chunk',
+              created: Math.floor(Date.now() / 1000),
+              model: body.model,
+              choices: [{ index: 0, delta: { content: `\n\n[工具调用失败: HTTP ${axiosResp.status}]` }, finish_reason: null }],
+            })}\n\n`);
+          }
+          return allContent;
+        }
+
+        response = axiosResp;
+        await new Promise<void>((resolveStream, rejectStream) => {
+          let buffer = '';
+
+          response.data.on('data', (chunk: Buffer) => {
+            buffer += chunk.toString();
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              const data = line.slice(6).trim();
+              if (data === '[DONE]') continue;
+
+              try {
+                const parsed = JSON.parse(data);
+                const choice = parsed.choices?.[0];
+                if (!choice) continue;
+
+                const delta = choice.delta || {};
+                finishReason = choice.finish_reason || null;
+
+                chunkCount++;
+                if (chunkCount <= 3) {
+                  console.log('[streamWithBuiltinTools] chunk', chunkCount, 'delta:', JSON.stringify(delta), 'finish:', finishReason);
+                }
+
+                if ((delta as any).reasoning_content) {
+                  currentReasoning += (delta as any).reasoning_content;
+                }
+
+                if (delta.content || (delta as any).reasoning_content) {
+                  if (delta.content) allContent += delta.content;
+                  res.write(`data: ${JSON.stringify({
+                    id: requestId,
+                    object: 'chat.completion.chunk',
+                    created: Math.floor(Date.now() / 1000),
+                    model: body.model,
+                    choices: [{ index: 0, delta, finish_reason: null }],
+                  })}\n\n`);
+                }
+
+                if (delta.tool_calls) {
+                  console.log('[streamWithBuiltinTools] Tool calls detected:', JSON.stringify(delta.tool_calls));
+                  for (const tc of delta.tool_calls) {
+                    const idx = tc.index;
+                    if (!toolCallBuffers.has(idx)) {
+                      toolCallBuffers.set(idx, { id: tc.id || '', name: tc.function?.name || '', args: '' });
+                    }
+                    const buf = toolCallBuffers.get(idx)!;
+                    if (tc.id) buf.id = tc.id;
+                    if (tc.function?.name) buf.name = tc.function.name;
+                    if (tc.function?.arguments) buf.args += tc.function.arguments;
+                  }
+                }
+              } catch { /* skip parse error */ }
+            }
+          });
+
+          response.data.on('end', () => {
+            console.log('[streamWithBuiltinTools] Stream ended, total chunks:', chunkCount, 'toolBuffers:', toolCallBuffers.size);
+            resolveStream();
+          });
+
+          response.data.on('error', (err: Error) => {
+            console.error('[streamWithBuiltinTools] Stream error:', err.message);
+            rejectStream(err);
+          });
+        });
+      } else {
+        // 非流式 follow-up 请求
+        const axiosResp = await axios.post(url, currentBody, {
+          headers,
+          timeout: 120000,
+          validateStatus: (status) => true,
+        });
+
+        if (axiosResp.status !== 200) {
+          const errBody = JSON.stringify(axiosResp.data || {}).slice(0, 200);
+          console.error('[streamWithBuiltinTools] Upstream returned', axiosResp.status, errBody);
           res.write(`data: ${JSON.stringify({
             id: requestId,
             object: 'chat.completion.chunk',
@@ -214,135 +306,57 @@ async function streamWithBuiltinTools(
             model: body.model,
             choices: [{ index: 0, delta: { content: `\n\n[工具调用失败: HTTP ${axiosResp.status}]` }, finish_reason: null }],
           })}\n\n`);
+          return allContent;
         }
-        return allContent;
-      }
 
-      response = axiosResp;
-      await new Promise<void>((resolveStream, rejectStream) => {
-        let buffer = '';
+        const data = axiosResp.data;
+        const choice = data.choices?.[0];
+        const msg = choice?.message || {};
 
-        response.data.on('data', (chunk: Buffer) => {
-          buffer += chunk.toString();
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
+        console.log('[streamWithBuiltinTools] Non-stream response, tool_calls:', msg.tool_calls?.length);
+        chunkCount++;
+        if (chunkCount <= 3) {
+          console.log('[streamWithBuiltinTools] follow-up msg:', JSON.stringify(msg).slice(0, 200));
+        }
 
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const data = line.slice(6).trim();
-            if (data === '[DONE]') continue;
+        // 转发文本内容
+        if (msg.content) {
+          allContent += msg.content;
+          res.write(`data: ${JSON.stringify({
+            id: requestId,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model: body.model,
+            choices: [{ index: 0, delta: { content: msg.content, role: 'assistant' }, finish_reason: null }],
+          })}\n\n`);
+        }
 
-            try {
-              const parsed = JSON.parse(data);
-              const choice = parsed.choices?.[0];
-              if (!choice) continue;
-
-              const delta = choice.delta || {};
-              finishReason = choice.finish_reason || null;
-
-              chunkCount++;
-              if (chunkCount <= 3) {
-                console.log('[streamWithBuiltinTools] chunk', chunkCount, 'delta:', JSON.stringify(delta), 'finish:', finishReason);
-              }
-
-              if ((delta as any).reasoning_content) {
-                currentReasoning += (delta as any).reasoning_content;
-              }
-
-              if (delta.content || (delta as any).reasoning_content) {
-                if (delta.content) allContent += delta.content;
-                res.write(`data: ${JSON.stringify({
-                  id: requestId,
-                  object: 'chat.completion.chunk',
-                  created: Math.floor(Date.now() / 1000),
-                  model: body.model,
-                  choices: [{ index: 0, delta, finish_reason: null }],
-                })}\n\n`);
-              }
-
-              if (delta.tool_calls) {
-                console.log('[streamWithBuiltinTools] Tool calls detected:', JSON.stringify(delta.tool_calls));
-                for (const tc of delta.tool_calls) {
-                  const idx = tc.index;
-                  if (!toolCallBuffers.has(idx)) {
-                    toolCallBuffers.set(idx, { id: tc.id || '', name: tc.function?.name || '', args: '' });
-                  }
-                  const buf = toolCallBuffers.get(idx)!;
-                  if (tc.id) buf.id = tc.id;
-                  if (tc.function?.name) buf.name = tc.function.name;
-                  if (tc.function?.arguments) buf.args += tc.function.arguments;
-                }
-              }
-            } catch { /* skip parse error */ }
+        // 检查工具调用
+        if (msg.tool_calls) {
+          console.log('[streamWithBuiltinTools] Tool calls in non-stream response:', msg.tool_calls.length);
+          for (const tc of msg.tool_calls) {
+            toolCallBuffers.set(tc.index || 0, {
+              id: tc.id || '',
+              name: tc.function?.name || '',
+              args: tc.function?.arguments || '',
+            });
           }
-        });
-
-        response.data.on('end', () => {
-          console.log('[streamWithBuiltinTools] Stream ended, total chunks:', chunkCount, 'toolBuffers:', toolCallBuffers.size);
-          resolveStream();
-        });
-
-        response.data.on('error', (err: Error) => {
-          console.error('[streamWithBuiltinTools] Stream error:', err.message);
-          rejectStream(err);
-        });
-      });
-    } else {
-      // 非流式 follow-up 请求
-      const axiosResp = await axios.post(url, currentBody, {
-        headers,
-        timeout: 120000,
-        validateStatus: (status) => true,
-      });
-
-      if (axiosResp.status !== 200) {
-        const errBody = JSON.stringify(axiosResp.data || {}).slice(0, 200);
-        console.error('[streamWithBuiltinTools] Upstream returned', axiosResp.status, errBody);
-        res.write(`data: ${JSON.stringify({
-          id: requestId,
-          object: 'chat.completion.chunk',
-          created: Math.floor(Date.now() / 1000),
-          model: body.model,
-          choices: [{ index: 0, delta: { content: `\n\n[工具调用失败: HTTP ${axiosResp.status}]` }, finish_reason: null }],
-        })}\n\n`);
-        return allContent;
-      }
-
-      const data = axiosResp.data;
-      const choice = data.choices?.[0];
-      const msg = choice?.message || {};
-
-      console.log('[streamWithBuiltinTools] Non-stream response, tool_calls:', msg.tool_calls?.length);
-      chunkCount++;
-      if (chunkCount <= 3) {
-        console.log('[streamWithBuiltinTools] follow-up msg:', JSON.stringify(msg).slice(0, 200));
-      }
-
-      // 转发文本内容
-      if (msg.content) {
-        allContent += msg.content;
-        res.write(`data: ${JSON.stringify({
-          id: requestId,
-          object: 'chat.completion.chunk',
-          created: Math.floor(Date.now() / 1000),
-          model: body.model,
-          choices: [{ index: 0, delta: { content: msg.content, role: 'assistant' }, finish_reason: null }],
-        })}\n\n`);
-      }
-
-      // 检查工具调用
-      if (msg.tool_calls) {
-        console.log('[streamWithBuiltinTools] Tool calls in non-stream response:', msg.tool_calls.length);
-        for (const tc of msg.tool_calls) {
-          toolCallBuffers.set(tc.index || 0, {
-            id: tc.id || '',
-            name: tc.function?.name || '',
-            args: tc.function?.arguments || '',
-          });
         }
-      }
 
-      finishReason = choice?.finish_reason || null;
+        finishReason = choice?.finish_reason || null;
+      }
+    } catch (e: any) {
+      console.error('[streamWithBuiltinTools] axios error:', e.message);
+      if (round > 0) {
+        res.write(`data: ${JSON.stringify({
+          id: requestId,
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: body.model,
+          choices: [{ index: 0, delta: { content: `\n\n[工具调用失败: ${e.message}]` }, finish_reason: null }],
+        })}\n\n`);
+      }
+      return allContent;
     }
 
     // 没有工具调用 → 结束流
