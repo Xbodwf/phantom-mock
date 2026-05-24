@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware.js';
 import { getChatSessionById, updateChatSession, FileNode } from '../db/chatSessions.js';
 
-const router = Router();
+const router: Router = Router();
 router.use(authMiddleware);
 
 // 扁平化目录到文件树
