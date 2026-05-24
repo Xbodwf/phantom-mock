@@ -635,7 +635,7 @@ async function handleUserChatRequest(
 
       if (useToolLoop) {
         // 非流式转发 + 工具执行循环，再将最终结果流式输出
-        let currentBody = body;
+        let currentBody = { ...body, stream: false };
         let finalContent = '';
         let finalReasoning = '';
         const maxToolRounds = 5;
@@ -681,7 +681,7 @@ async function handleUserChatRequest(
             tool_calls: toolCalls,
           });
           for (const r of toolResults) newMessages.push(r);
-          currentBody = { ...currentBody, messages: newMessages };
+          currentBody = { ...currentBody, messages: newMessages, stream: false };
         }
 
         // 流式输出最终结果
