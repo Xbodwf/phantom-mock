@@ -170,18 +170,22 @@ async function streamWithBuiltinTools(
 ): Promise<string> {
   const { default: axios } = await import('axios');
 
+  console.log('[streamWithBuiltinTools] Starting, model:', body.model, 'forwardModel:', getForwardModelName(runtimeModel, body.model));
+
   let allContent = '';
   const forwardModel = getForwardModelName(runtimeModel, body.model);
   let currentBody = { ...body, stream: true, model: forwardModel };
   const maxRounds = 5;
 
   for (let round = 0; round < maxRounds; round++) {
+    console.log('[streamWithBuiltinTools] Round', round, 'messages count:', currentBody.messages?.length);
     const url = resolveForwardUrl(runtimeModel, 'chat', body.model, forwardModel);
     const apiKey = getEffectiveApiKey(runtimeModel);
     const headers = mergeHeaders(runtimeModel.defaultHeaders, {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     });
+    console.log('[streamWithBuiltinTools] URL:', url, 'Key:', apiKey.slice(0, 8) + '...');
 
     // 收集本轮工具调用（keyed by index）
     const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
@@ -194,6 +198,7 @@ async function streamWithBuiltinTools(
       responseType: 'stream',
     });
 
+    let chunkCount = 0;
     await new Promise<void>((resolveStream, rejectStream) => {
       let buffer = '';
 
@@ -215,6 +220,11 @@ async function streamWithBuiltinTools(
             const delta = choice.delta || {};
             finishReason = choice.finish_reason || null;
 
+            chunkCount++;
+            if (chunkCount <= 3) {
+              console.log('[streamWithBuiltinTools] chunk', chunkCount, 'delta:', JSON.stringify(delta), 'finish:', finishReason);
+            }
+
             // 转义 reasoning_content
             if ((delta as any).reasoning_content) {
               currentReasoning += (delta as any).reasoning_content;
@@ -234,6 +244,7 @@ async function streamWithBuiltinTools(
 
             // 工具调用 → buffering（不转发给客户端）
             if (delta.tool_calls) {
+              console.log('[streamWithBuiltinTools] Tool calls detected:', JSON.stringify(delta.tool_calls));
               for (const tc of delta.tool_calls) {
                 const idx = tc.index;
                 if (!toolCallBuffers.has(idx)) {
@@ -252,20 +263,23 @@ async function streamWithBuiltinTools(
       });
 
       response.data.on('end', () => {
+        console.log('[streamWithBuiltinTools] Stream ended, total chunks:', chunkCount, 'toolBuffers:', toolCallBuffers.size);
         resolveStream();
       });
 
       response.data.on('error', (err: Error) => {
+        console.error('[streamWithBuiltinTools] Stream error:', err.message);
         rejectStream(err);
       });
     });
 
     // 没有工具调用 → 结束流
     if (toolCallBuffers.size === 0) {
+      console.log('[streamWithBuiltinTools] No tool calls, returning content length:', allContent.length);
       return allContent;
     }
 
-    // 有工具调用：不转发 finish_reason 'tool_calls'，直接进入下一轮
+    console.log('[streamWithBuiltinTools] Tool calls found:', toolCallBuffers.size);
 
     // 有工具调用 → 执行内置工具
     const toolCalls = Array.from(toolCallBuffers.values()).filter(tc =>
@@ -273,8 +287,11 @@ async function streamWithBuiltinTools(
     );
 
     if (toolCalls.length === 0) {
+      console.log('[streamWithBuiltinTools] No builtin tools found among', toolCallBuffers.size, 'calls');
       return allContent;
     }
+
+    console.log('[streamWithBuiltinTools] Executing builtin tools:', toolCalls.map(tc => tc.name).join(','));
 
     const toolResults = await Promise.all(
       toolCalls.map(tc => executeBuiltinTool({ name: tc.name, arguments: tc.args }))
@@ -295,6 +312,7 @@ async function streamWithBuiltinTools(
     currentBody = { ...currentBody, messages: newMessages, stream: true };
   }
 
+  console.log('[streamWithBuiltinTools] Exceeded max rounds, returning:', allContent.length);
   return allContent;
 }
 
@@ -777,11 +795,18 @@ async function handleUserChatRequest(
       const useToolLoop = hasBuiltinTools(body.tools);
 
       if (useToolLoop) {
+        console.log('[User Chat] Starting streamWithBuiltinTools');
         try {
           const allContent = await streamWithBuiltinTools(runtimeModel, body, res, requestId);
           streamingContent = allContent;
+          console.log('[User Chat] streamWithBuiltinTools done, content length:', allContent.length);
         } catch (error: any) {
-          console.error('[User Chat] Stream with tools failed:', error.message);
+          console.error('[User Chat] Stream with tools failed:', error.message, error.stack);
+          if (!res.headersSent) {
+            res.write(buildStreamChunk(requestId, body.model, '系统错误: ' + error.message, true));
+          } else {
+            res.write(buildStreamChunk(requestId, body.model, '系统错误: ' + error.message, false));
+          }
         }
         streamEnded = true;
         if (sessionId && aiMsgCreated) {
