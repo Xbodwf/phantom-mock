@@ -1277,61 +1277,6 @@ export function UserChatPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [webContainerStatus, setWebContainerStatus] = useState<string>('idle');
 
-  // WebContainer 启动：当 session 有 fileTree 时自动 boot
-  useEffect(() => {
-    if (!currentSession?.fileTree || currentSession.fileTree.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        setWebContainerStatus('booting');
-        const { WebContainer } = await import('@webcontainer/api');
-        const instance = await WebContainer.boot();
-        if (cancelled) return;
-        (window as any).__webcontainer = instance;
-        setWebContainerStatus('ready');
-        console.log('[WebContainer] Booted');
-
-        // 挂载文件树
-        const toTree = (nodes: any[]): Record<string, any> => {
-          const tree: Record<string, any> = {};
-          for (const node of nodes) {
-            if (node.type === 'directory') {
-              tree[node.name] = { directory: toTree(node.children || []) };
-            } else {
-              tree[node.name] = { file: { contents: node.content || '' } };
-            }
-          }
-          return tree;
-        };
-        await instance.fs.mount(toTree(currentSession.fileTree));
-        console.log('[WebContainer] Files mounted');
-      } catch (e: any) {
-        if (!cancelled) {
-          console.error('[WebContainer] Boot failed:', e);
-          setWebContainerStatus('error');
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [currentSession?.id]);
-
-  // webContainer 工具函数
-  const webContainerSpawn = useCallback(async (command: string, args?: string[]): Promise<{ output: string; exitCode: number }> => {
-    const instance = (window as any).__webcontainer;
-    if (!instance) return { output: '[WebContainer] Not booted', exitCode: 1 };
-    try {
-      const process = await instance.spawn(command, args || []);
-      let output = '';
-      process.output.pipeTo(new WritableStream({
-        write(data: string) { output += data; },
-      }));
-      const exitCode = await process.exit;
-      return { output, exitCode };
-    } catch (e: any) {
-      return { output: `Error: ${e.message}`, exitCode: 1 };
-    }
-  }, []);
-
   // 队列和流式控制
   const [messageQueue, setMessageQueue] = useState<Array<{ input: string; files: UploadedFile[] }>>([]);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
@@ -1383,6 +1328,93 @@ export function UserChatPage() {
   const currentSession = useMemo(() => {
     return sessions.find((s) => s.id === currentSessionId) || null;
   }, [sessions, currentSessionId]);
+
+  // 将 fileTree 转为 WebContainer 挂载格式
+  const toWebContainerTree = useCallback((nodes: FileNode[]): Record<string, any> => {
+    const tree: Record<string, any> = {};
+    for (const node of nodes) {
+      if (node.type === 'directory') {
+        tree[node.name] = { directory: toWebContainerTree(node.children || []) };
+      } else {
+        tree[node.name] = { file: { contents: node.content || '' } };
+      }
+    }
+    return tree;
+  }, []);
+
+  // WebContainer 启动：当 session 有 fileTree 时自动 boot
+  useEffect(() => {
+    if (!currentSession?.fileTree || currentSession.fileTree.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setWebContainerStatus('booting');
+        const { WebContainer } = await import('@webcontainer/api');
+        const instance = await WebContainer.boot();
+        if (cancelled) return;
+        (window as any).__webcontainer = instance;
+        setWebContainerStatus('ready');
+        console.log('[WebContainer] Booted');
+
+        await instance.fs.mount(toWebContainerTree(currentSession.fileTree));
+        console.log('[WebContainer] Files mounted');
+      } catch (e: any) {
+        if (!cancelled) {
+          console.error('[WebContainer] Boot failed:', e);
+          setWebContainerStatus('error');
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentSession?.id]);
+
+  // 热同步：fileTree 变化时重新挂载
+  useEffect(() => {
+    if (!currentSession?.fileTree) return;
+    const instance = (window as any).__webcontainer;
+    if (!instance) return;
+    (async () => {
+      try {
+        await instance.fs.mount(toWebContainerTree(currentSession.fileTree));
+        console.log('[WebContainer] Files re-mounted');
+      } catch (e: any) {
+        console.error('[WebContainer] Re-mount failed:', e);
+      }
+    })();
+  }, [currentSession?.fileTree, toWebContainerTree]);
+
+  // 流结束后拉取最新 session（获取 DB 中更新的 fileTree）
+  useEffect(() => {
+    if (!currentSessionId || loading) return;
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const fresh = await loadSessionFromServer(currentSessionId!);
+        if (fresh && !cancelled) {
+          setSessions((prev) => prev.map((s) => s.id === fresh.id ? { ...s, ...fresh } : s));
+        }
+      } catch {}
+    };
+    const timer = setTimeout(check, 500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [loading, currentSessionId, loadSessionFromServer, setSessions]);
+
+  // webContainer 工具函数
+  const webContainerSpawn = useCallback(async (command: string, args?: string[]): Promise<{ output: string; exitCode: number }> => {
+    const instance = (window as any).__webcontainer;
+    if (!instance) return { output: '[WebContainer] Not booted', exitCode: 1 };
+    try {
+      const process = await instance.spawn(command, args || []);
+      let output = '';
+      process.output.pipeTo(new WritableStream({
+        write(data: string) { output += data; },
+      }));
+      const exitCode = await process.exit;
+      return { output, exitCode };
+    } catch (e: any) {
+      return { output: `Error: ${e.message}`, exitCode: 1 };
+    }
+  }, []);
 
   // ==================== 滚动控制 ====================
 

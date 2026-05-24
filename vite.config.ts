@@ -62,7 +62,6 @@ export default defineConfig({
   },
   build: {
     minify: 'oxc', // 使用oxc进行代码压缩（最快）
-    sourcemap: true,
     outDir: 'dist/frontend',
     emptyOutDir: true,
     rollupOptions: {
