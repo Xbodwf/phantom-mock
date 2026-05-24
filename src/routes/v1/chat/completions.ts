@@ -724,28 +724,38 @@ async function handleChatRequest(
  res.json(buildResponse('请求超时，请重试', body.model, requestId, promptContent));
  },10 *60 *1000);
 
- try {
- const content = await responsePromise;
- clearTimeout(timeout);
- const promptContent = body.messages.map(m => getContentString(m.content)).join('\n');
- const response = buildResponse(content, body.model, requestId, promptContent);
+  try {
+    const content = await responsePromise;
+    clearTimeout(timeout);
 
- if (userId && apiKeyId) {
- await recordUsageAndApplyBilling({
- userId,
- apiKeyId,
- model,
- modelName: body.model,
- endpoint: 'chat',
- promptTokens: response.usage.prompt_tokens,
- completionTokens: response.usage.completion_tokens,
- totalTokens: response.usage.total_tokens,
- requestId,
- });
- }
+    // 检查是否是工具调用响应（由 tool_call WS 消息产生）
+    if (content.startsWith('{') && content.includes('"tool_calls"')) {
+      try {
+        const toolCallResponse = JSON.parse(content);
+        res.json(toolCallResponse);
+        return;
+      } catch {}
+    }
 
- res.json(response);
- } catch {
+    const promptContent = body.messages.map(m => getContentString(m.content)).join('\n');
+    const response = buildResponse(content, body.model, requestId, promptContent);
+
+    if (userId && apiKeyId) {
+      await recordUsageAndApplyBilling({
+        userId,
+        apiKeyId,
+        model,
+        modelName: body.model,
+        endpoint: 'chat',
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+        totalTokens: response.usage.total_tokens,
+        requestId,
+      });
+    }
+
+    res.json(response);
+  } catch {
  clearTimeout(timeout);
  res.status(500).json({
  error: { message: 'Internal server error', type: 'server_error' },

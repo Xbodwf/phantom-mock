@@ -13,6 +13,7 @@ interface ServerContextType {
  sendResponse: (requestId: string, content: string) => void;
  sendStreamChunk: (requestId: string, content: string) => void;
  endStream: (requestId: string) => void;
+ sendToolCall: (requestId: string, toolCalls: Array<{ id: string; name: string; arguments: string }>) => void;
  sendImageResponse: (requestId: string, images: Array<{ url?: string; b64_json?: string }>) => void;
  sendVideoResponse: (requestId: string, videos: Array<{ url?: string; b64_json?: string }>) => void;
  addModel: (model: Partial<Model>) => Promise<void>;
@@ -224,15 +225,25 @@ export function ServerProvider({ children }: { children: ReactNode }) {
  };
  }, [ws]);
 
- const sendResponse = useCallback((requestId: string, content: string) => {
- if (!ws) return;
- ws.send(JSON.stringify({ type: 'response', payload: { requestId, content } }));
- setPendingRequests(prev => {
- const next = new Map(prev);
- next.delete(requestId);
- return next;
- });
- }, [ws]);
+  const sendResponse = useCallback((requestId: string, content: string) => {
+  if (!ws) return;
+  ws.send(JSON.stringify({ type: 'response', payload: { requestId, content } }));
+  setPendingRequests(prev => {
+  const next = new Map(prev);
+  next.delete(requestId);
+  return next;
+  });
+  }, [ws]);
+
+  const sendToolCall = useCallback((requestId: string, toolCalls: Array<{ id: string; name: string; arguments: string }>) => {
+  if (!ws) return;
+  ws.send(JSON.stringify({ type: 'tool_call', payload: { requestId, toolCalls } }));
+  setPendingRequests(prev => {
+  const next = new Map(prev);
+  next.delete(requestId);
+  return next;
+  });
+  }, [ws]);
 
  const sendStreamChunk = useCallback((requestId: string, content: string) => {
  if (!ws) return;
@@ -412,10 +423,11 @@ export function ServerProvider({ children }: { children: ReactNode }) {
  settings,
  apiKeys,
  sendResponse,
- sendStreamChunk,
- endStream,
- sendImageResponse,
- sendVideoResponse,
+  sendStreamChunk,
+  endStream,
+  sendToolCall,
+  sendImageResponse,
+  sendVideoResponse,
  addModel,
  updateModel,
  deleteModel,

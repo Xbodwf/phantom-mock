@@ -35,11 +35,12 @@ import {
   Settings2,
   Video,
   Upload,
+  Wrench,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useServer } from '../contexts/ServerContext';
-import type { PendingRequest, MessageContent, ImageGenerationRequest, VideoGenerationRequest } from '../types';
+import type { PendingRequest, MessageContent, ImageGenerationRequest, VideoGenerationRequest, ManualToolCall } from '../types';
 
 interface RequestCardProps {
   requestId: string;
@@ -736,7 +737,7 @@ function VideoRequestCard({
 }
 
 export default function RequestCard({ requestId, request }: RequestCardProps) {
-  const { sendResponse, sendStreamChunk, endStream, sendImageResponse, sendVideoResponse, removeRequest, settings } = useServer();
+  const { sendResponse, sendStreamChunk, endStream, sendToolCall, sendImageResponse, sendVideoResponse, removeRequest, settings } = useServer();
   const [expanded, setExpanded] = useState(true);
   const [response, setResponse] = useState('');
   const [streamInput, setStreamInput] = useState('');
@@ -744,6 +745,10 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
   const [pendingSend, setPendingSend] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(0);
   const [isSmoothSending, setIsSmoothSending] = useState(false); // 平滑发送中
+  const [replyMode, setReplyMode] = useState<'text' | 'tool'>('text'); // 回复模式
+  const [toolCalls, setToolCalls] = useState<ManualToolCall[]>([
+    { id: `call_${Date.now()}`, name: '', arguments: '' },
+  ]); // 工具调用列表
   
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -844,19 +849,11 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
     setResponse('');
   };
 
-  // 处理流式输入变化
+  // 处理流式输入变化 - 仅更新输入值，不再自动发送
   const handleStreamInputChange = useCallback((value: string) => {
-    // 如果正在平滑发送，不允许修改输入
     if (isSmoothSending) return;
-    
     setStreamInput(value);
-    
-    // 平滑输出模式：不使用延迟，直接等待用户确认发送
-    if (smoothOutput) {
-      return;
-    }
-    
-    // 清除之前的定时器
+    // 清除任何待发送状态（用户修改了内容）
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -865,35 +862,39 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
       clearInterval(countdownRef.current);
       countdownRef.current = null;
     }
-    
-    if (!value.trim()) {
-      setPendingSend(null);
-      setCountdown(0);
+    setPendingSend(null);
+    setCountdown(0);
+  }, [isSmoothSending]);
+
+  // 手动发送流式内容
+  const handleSendStream = useCallback(() => {
+    if (!streamInput.trim()) return;
+
+    if (smoothOutput) {
+      startSmoothSend(streamInput);
       return;
     }
-    
-    // 如果延迟为 0，立即发送
+
     if (delay === 0) {
-      sendStreamChunk(requestId, value);
-      setSentChunks(prev => [...prev, { content: value, sentAt: Date.now() }]);
+      sendStreamChunk(requestId, streamInput);
+      setSentChunks(prev => [...prev, { content: streamInput, sentAt: Date.now() }]);
       setStreamInput('');
       return;
     }
-    
-    // 设置延迟发送
-    setPendingSend(value);
-    
+
+    // 延迟发送模式
+    setPendingSend(streamInput);
     timerRef.current = setTimeout(() => {
-      if (value.trim()) {
-        sendStreamChunk(requestId, value);
-        setSentChunks(prev => [...prev, { content: value, sentAt: Date.now() }]);
+      if (streamInput.trim()) {
+        sendStreamChunk(requestId, streamInput);
+        setSentChunks(prev => [...prev, { content: streamInput, sentAt: Date.now() }]);
         setStreamInput('');
       }
       setPendingSend(null);
       setCountdown(0);
       timerRef.current = null;
     }, delay);
-  }, [delay, requestId, sendStreamChunk, smoothOutput, isSmoothSending]);
+  }, [streamInput, delay, requestId, sendStreamChunk, smoothOutput, startSmoothSend]);
 
   // 平滑模式下开始发送
   const handleStartSmoothSend = () => {
@@ -968,6 +969,25 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
     }
     endStream(requestId);
   };
+
+  // 工具调用操作
+  const handleAddToolCall = useCallback(() => {
+    setToolCalls(prev => [...prev, { id: `call_${Date.now()}_${prev.length}`, name: '', arguments: '' }]);
+  }, []);
+
+  const handleRemoveToolCall = useCallback((index: number) => {
+    setToolCalls(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const handleToolCallChange = useCallback((index: number, field: 'name' | 'arguments', value: string) => {
+    setToolCalls(prev => prev.map((tc, i) => i === index ? { ...tc, [field]: value } : tc));
+  }, []);
+
+  const handleSendToolCall = useCallback(() => {
+    const validToolCalls = toolCalls.filter(tc => tc.name.trim());
+    if (validToolCalls.length === 0) return;
+    sendToolCall(requestId, validToolCalls);
+  }, [toolCalls, requestId, sendToolCall]);
 
   // 丢弃请求
   const handleDiscard = () => {
@@ -1218,7 +1238,92 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
 
             <Divider sx={{ my: 2 }} />
 
-            {isStream ? (
+            {/* 回复模式切换 */}
+            <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+              <Tabs
+                value={replyMode}
+                onChange={(_, v) => setReplyMode(v)}
+                variant="fullWidth"
+              >
+                <Tab label="文本回复" value="text" />
+                <Tab label="工具调用" value="tool" />
+              </Tabs>
+            </Box>
+
+            {/* 工具调用模式 */}
+            {replyMode === 'tool' && (
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Wrench size={16} /> 工具调用
+                </Typography>
+
+                {toolCalls.map((tc, index) => (
+                  <Paper
+                    key={index}
+                    variant="outlined"
+                    sx={{ p: 1.5, mb: 1.5, borderRadius: 2 }}
+                  >
+                    <Stack spacing={1.5}>
+                      <TextField
+                        size="small"
+                        label="函数名称"
+                        placeholder="如: get_weather"
+                        value={tc.name}
+                        onChange={(e) => handleToolCallChange(index, 'name', e.target.value)}
+                        fullWidth
+                      />
+                      <TextField
+                        size="small"
+                        label="参数 (JSON)"
+                        placeholder='如: {"location": "Beijing"}'
+                        value={tc.arguments}
+                        onChange={(e) => handleToolCallChange(index, 'arguments', e.target.value)}
+                        multiline
+                        minRows={2}
+                        maxRows={6}
+                        fullWidth
+                      />
+                      {toolCalls.length > 1 && (
+                        <Button
+                          size="small"
+                          color="error"
+                          variant="text"
+                          onClick={() => handleRemoveToolCall(index)}
+                          startIcon={<Trash2 size={14} />}
+                        >
+                          删除
+                        </Button>
+                      )}
+                    </Stack>
+                  </Paper>
+                ))}
+
+                <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={handleAddToolCall}
+                    startIcon={<Send size={14} />}
+                  >
+                    添加工具调用
+                  </Button>
+                </Stack>
+
+                <Button
+                  variant="contained"
+                  onClick={handleSendToolCall}
+                  disabled={!toolCalls.some(tc => tc.name.trim())}
+                  startIcon={<Wrench size={16} />}
+                  fullWidth
+                  color="secondary"
+                >
+                  发送工具调用
+                </Button>
+              </Box>
+            )}
+
+            {/* 文本回复模式 */}
+            {replyMode === 'text' && isStream ? (
               <Box>
                 {/* 已发送的内容 - 高亮显示 */}
                 {sentChunks.length > 0 && (
@@ -1347,13 +1452,13 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
                   fullWidth
                   size="small"
                   placeholder={
-                    isSmoothSending ? "正在发送中..." :
-                    smoothOutput ? "输入内容后点击发送按钮开始平滑输出..." :
-                    delay > 0 ? "输入内容，延迟后自动发送..." : "输入内容，按回车发送..."
+                    isSmoothSending ? "正在平滑输出中..." :
+                    smoothOutput ? "输入完整内容后点击发送按钮" :
+                    "输入要流式发送的内容..."
                   }
                   value={streamInput}
                   onChange={(e) => handleStreamInputChange(e.target.value)}
-                  disabled={!!pendingSend || isSmoothSending}
+                  disabled={isSmoothSending}
                   multiline
                   maxRows={3}
                   sx={{ mb: 2 }}
@@ -1364,16 +1469,15 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
                     {smoothOutput ? `平滑: ${smoothSpeed} 字/秒` : `延迟: ${delay}ms`} | 已发送: {sentChunks.length} 块
                   </Typography>
                   <Stack direction="row" spacing={1}>
-                    {/* 平滑模式下显示发送按钮 */}
-                    {smoothOutput && !isSmoothSending && (
+                    {!isSmoothSending && (
                       <Button
                         variant="contained"
-                        onClick={handleStartSmoothSend}
-                        disabled={!streamInput.trim()}
+                        onClick={handleSendStream}
+                        disabled={!streamInput.trim() || !!pendingSend}
                         startIcon={<Send size={14} />}
                         size="small"
                       >
-                        开始发送
+                        {smoothOutput ? '开始平滑输出' : '发送'}
                       </Button>
                     )}
                     <Button

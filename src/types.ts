@@ -590,7 +590,7 @@ export interface ModelsResponse {
 
 // WebSocket 消息类型
 export interface WSMessage {
-  type: 'request' | 'response' | 'stream' | 'stream_end' | 'connected' | 'models_update' | 'image_response' | 'video_response' | 'reverse-connect' | 'reverse-connect-ack' | 'reverse-disconnect' | 'node-connect-ack' | 'node-heartbeat' | 'http_request' | 'http_response' | 'error';
+  type: 'request' | 'response' | 'stream' | 'stream_end' | 'tool_call' | 'connected' | 'models_update' | 'image_response' | 'video_response' | 'reverse-connect' | 'reverse-connect-ack' | 'reverse-disconnect' | 'node-connect-ack' | 'node-heartbeat' | 'http_request' | 'http_response' | 'error';
   payload: {
     requestId: string;
     data: ChatCompletionRequest;
@@ -622,6 +622,13 @@ export interface WSMessage {
   } | {
     requestId: string;
     content: string;
+  } | {
+    requestId: string;
+    toolCalls: Array<{
+      id: string;
+      name: string;
+      arguments: string;
+    }>;
   } | {
     requestId: string;
     images: Array<{ url?: string; b64_json?: string }>;

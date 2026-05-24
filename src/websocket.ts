@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { WSMessage, PendingRequest, Model } from './types.js';
 import { addPendingRequest, getPendingRequest, removePendingRequest, getAllPendingRequests } from './requestStore.js';
+import { buildToolCallStreamChunk } from './responseBuilder.js';
 
 let wss: WebSocketServer;
 const clients = new Set<WebSocket>();
@@ -76,20 +77,22 @@ export function initWebSocket(server: import('http').Server, path: string = '/ws
 }
 
 function handleClientMessage(ws: WebSocket, msg: WSMessage) {
-  if (msg.type === 'response' || msg.type === 'stream' || msg.type === 'stream_end' || msg.type === 'image_response' || msg.type === 'video_response') {
-    const payload = msg.payload as { requestId: string; content: string; images?: any[]; videos?: any[] };
-    const req = getPendingRequest(payload.requestId);
+  const payload = msg.payload as any;
+  const requestId = payload?.requestId;
+
+  if (msg.type === 'response' || msg.type === 'stream' || msg.type === 'stream_end' || msg.type === 'image_response' || msg.type === 'video_response' || msg.type === 'tool_call') {
+    const req = getPendingRequest(requestId);
 
     if (!req) {
-      console.warn('[WS] 未找到请求:', payload.requestId);
+      console.warn('[WS] 未找到请求:', requestId);
       return;
     }
 
     if (msg.type === 'response') {
       // 非流式响应
       req.resolve(payload.content);
-      removePendingRequest(payload.requestId);
-      console.log('[WS] 请求已处理:', payload.requestId);
+      removePendingRequest(requestId);
+      console.log('[WS] 请求已处理:', requestId);
     } else if (msg.type === 'stream') {
       // 流式响应 - 发送块
       if (req.streamController) {
@@ -100,18 +103,56 @@ function handleClientMessage(ws: WebSocket, msg: WSMessage) {
       if (req.streamController) {
         req.streamController.close();
       }
-      removePendingRequest(payload.requestId);
-      console.log('[WS] 流式请求已完成:', payload.requestId);
+      removePendingRequest(requestId);
+      console.log('[WS] 流式请求已完成:', requestId);
+    } else if (msg.type === 'tool_call') {
+      const toolCalls: Array<{ id: string; name: string; arguments: string }> = payload.toolCalls || [];
+      console.log('[WS] 工具调用请求:', requestId, toolCalls);
+
+      if (req.streamController) {
+        // 流式：发送工具调用 SSE 块，然后结束
+        const model = req.request?.model || 'unknown';
+        req.streamController.enqueue(buildToolCallStreamChunk(requestId, model, toolCalls, true, false));
+        req.streamController.enqueue(buildToolCallStreamChunk(requestId, model, toolCalls, false, true));
+        req.streamController.close();
+      } else {
+        // 非流式：构建带 tool_calls 的响应对象
+        const responseData = {
+          id: requestId,
+          object: 'chat.completion',
+          created: Math.floor(Date.now() / 1000),
+          model: req.request?.model || 'unknown',
+          choices: [{
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: toolCalls.map(tc => ({
+                id: tc.id,
+                type: 'function' as const,
+                function: {
+                  name: tc.name,
+                  arguments: tc.arguments,
+                },
+              })),
+            },
+            finish_reason: 'tool_calls',
+          }],
+        };
+        req.resolve(JSON.stringify(responseData));
+      }
+      removePendingRequest(requestId);
+      console.log('[WS] 工具调用请求已处理:', requestId);
     } else if (msg.type === 'image_response') {
       // 图片响应
       req.resolve(JSON.stringify(payload.images || []));
-      removePendingRequest(payload.requestId);
-      console.log('[WS] 图片请求已处理:', payload.requestId);
+      removePendingRequest(requestId);
+      console.log('[WS] 图片请求已处理:', requestId);
     } else if (msg.type === 'video_response') {
       // 视频响应
       req.resolve(JSON.stringify(payload.videos || []));
-      removePendingRequest(payload.requestId);
-      console.log('[WS] 视频请求已处理:', payload.requestId);
+      removePendingRequest(requestId);
+      console.log('[WS] 视频请求已处理:', requestId);
     }
   }
 }

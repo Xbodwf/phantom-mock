@@ -228,7 +228,7 @@ export interface PendingRequest {
 }
 
 export interface WSMessage {
-  type: 'request' | 'response' | 'stream' | 'stream_end' | 'connected' | 'models_update';
+  type: 'request' | 'response' | 'stream' | 'stream_end' | 'tool_call' | 'connected' | 'models_update';
   payload: {
     requestId: string;
     data: ChatCompletionRequest;
@@ -236,10 +236,23 @@ export interface WSMessage {
     requestId: string;
     content: string;
   } | {
+    requestId: string;
+    toolCalls: Array<{
+      id: string;
+      name: string;
+      arguments: string;
+    }>;
+  } | {
     message: string;
   } | {
     models: Model[];
   };
+}
+
+export interface ManualToolCall {
+  id: string;
+  name: string;
+  arguments: string;
 }
 
 export interface Stats {

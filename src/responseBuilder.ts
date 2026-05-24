@@ -59,6 +59,44 @@ export function buildStreamChunk(
   return `data: ${JSON.stringify(chunk)}\n\n`;
 }
 
+// 构建工具调用流式块
+export function buildToolCallStreamChunk(
+  requestId: string,
+  model: string,
+  toolCalls: Array<{ id: string; name: string; arguments: string }>,
+  isFirst: boolean = false,
+  isLast: boolean = false,
+  finishReason: string | null = null
+): string {
+  const chunk: any = {
+    id: requestId,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [
+      {
+        index: 0,
+        delta: isFirst ? { role: 'assistant', content: null } : {},
+        finish_reason: isLast ? (finishReason || 'tool_calls') : null,
+      },
+    ],
+  };
+
+  if (toolCalls && toolCalls.length > 0) {
+    chunk.choices[0].delta.tool_calls = toolCalls.map((tc, idx) => ({
+      index: idx,
+      id: tc.id,
+      type: 'function',
+      function: {
+        name: tc.name,
+        arguments: tc.arguments,
+      },
+    }));
+  }
+
+  return `data: ${JSON.stringify(chunk)}\n\n`;
+}
+
 // 构建流式结束块
 export function buildStreamDone(): string {
   return 'data: [DONE]\n\n';
