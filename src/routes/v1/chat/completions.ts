@@ -23,8 +23,12 @@ import { calculateCost, calculateTokens } from '../../../billing.js';
 import { executeAction } from '../../../actions/executor.js';
 import { forwardChatRequest, forwardStreamRequest, isModelForwardingConfigured } from '../../../forwarder.js';
 import { getContentString, extractApiKey } from '../utils.js';
+import { modelRateLimitMiddleware, recordModelTpmUsage, type AuthRequest } from '../../../middleware.js';
 
 const router: Router = Router();
+
+// 速率限制：读取模型配置中的 rpm / tpm / maxConcurrentRequests
+router.post('/', modelRateLimitMiddleware());
 
 /**
  * POST /v1/chat/completions - 聊天补全
@@ -132,30 +136,33 @@ router.post('/', async (req: Request, res: Response) => {
  });
  }
 
- try {
- console.log('[ACTION] Executing action:', action.name, 'with userId:', userId, 'apiKeyId:', apiKeyId);
- const executionResult = await executeAction(action, input,30000, userId, apiKeyId);
- console.log('[ACTION] Execution completed successfully');
+  try {
+  console.log('[ACTION] Executing action:', action.name, 'with userId:', userId, 'apiKeyId:', apiKeyId);
+  const executionResult = await executeAction(action, input,30000, userId, apiKeyId);
+  console.log('[ACTION] Execution completed successfully');
 
- return res.json({
- id: generateRequestId(),
- object: 'chat.completion',
- created: Math.floor(Date.now() /1000),
- model: body.model,
- choices: [{
- index:0,
- message: {
- role: 'assistant',
- content: JSON.stringify(executionResult.result),
- },
- finish_reason: 'stop',
- }],
- usage: {
- prompt_tokens: executionResult.usage?.promptTokens ||0,
- completion_tokens: executionResult.usage?.completionTokens ||0,
- total_tokens: (executionResult.usage?.promptTokens ||0) + (executionResult.usage?.completionTokens ||0),
- },
- });
+  const totalTokens = (executionResult.usage?.promptTokens ||0) + (executionResult.usage?.completionTokens ||0);
+  recordModelTpmUsage(body.model, totalTokens, userId);
+
+  return res.json({
+  id: generateRequestId(),
+  object: 'chat.completion',
+  created: Math.floor(Date.now() /1000),
+  model: body.model,
+  choices: [{
+  index:0,
+  message: {
+  role: 'assistant',
+  content: JSON.stringify(executionResult.result),
+  },
+  finish_reason: 'stop',
+  }],
+  usage: {
+  prompt_tokens: executionResult.usage?.promptTokens ||0,
+  completion_tokens: executionResult.usage?.completionTokens ||0,
+  total_tokens: totalTokens,
+  },
+  });
  } catch (error) {
  console.error('[ACTION] Execution failed:', error);
  return res.status(400).json({
@@ -548,27 +555,29 @@ async function handleChatRequest(
 
  removePendingRequest(requestId);
 
- if (raceResult.type === 'user') {
- console.log('[Manual] 用户抢先回复');
- const promptContent = body.messages.map(m => getContentString(m.content)).join('\n');
- const response = buildResponse(raceResult.content, body.model, requestId, promptContent);
+  if (raceResult.type === 'user') {
+  console.log('[Manual] 用户抢先回复');
+  const promptContent = body.messages.map(m => getContentString(m.content)).join('\n');
+  const response = buildResponse(raceResult.content, body.model, requestId, promptContent);
 
- if (userId && apiKeyId) {
- await recordUsageAndApplyBilling({
- userId,
- apiKeyId,
- model,
- modelName: body.model,
- endpoint: 'chat',
- promptTokens: response.usage.prompt_tokens,
- completionTokens: response.usage.completion_tokens,
- totalTokens: response.usage.total_tokens,
- requestId,
- });
- }
+  recordModelTpmUsage(body.model, response.usage.total_tokens, userId);
 
- return res.json(response);
- }
+  if (userId && apiKeyId) {
+  await recordUsageAndApplyBilling({
+  userId,
+  apiKeyId,
+  model,
+  modelName: body.model,
+  endpoint: 'chat',
+  promptTokens: response.usage.prompt_tokens,
+  completionTokens: response.usage.completion_tokens,
+  totalTokens: response.usage.total_tokens,
+  requestId,
+  });
+  }
+
+  return res.json(response);
+  }
 
  if (!raceResult.result.success) {
  console.log(`[Forwarder] 转发失败: ${raceResult.result.error}`);
@@ -592,26 +601,29 @@ async function handleChatRequest(
 
  return res.status(502).json(errorResponse);
  }
- } else {
- console.log('[Forwarder] AI 转发成功');
+  } else {
+  console.log('[Forwarder] AI 转发成功');
 
- if (userId && apiKeyId) {
- const response = raceResult.result.response;
- await recordUsageAndApplyBilling({
- userId,
- apiKeyId,
- model,
- modelName: body.model,
- endpoint: 'chat',
- promptTokens: response.usage?.prompt_tokens ||0,
- completionTokens: response.usage?.completion_tokens ||0,
- totalTokens: response.usage?.total_tokens ||0,
- requestId,
- });
- }
+  const forwardResponse = raceResult.result.response;
+  const totalFwdTokens = (forwardResponse.usage?.prompt_tokens ||0) + (forwardResponse.usage?.completion_tokens ||0);
+  recordModelTpmUsage(body.model, totalFwdTokens, userId);
 
- return res.json(raceResult.result.response);
- }
+  if (userId && apiKeyId) {
+  await recordUsageAndApplyBilling({
+  userId,
+  apiKeyId,
+  model,
+  modelName: body.model,
+  endpoint: 'chat',
+  promptTokens: forwardResponse.usage?.prompt_tokens ||0,
+  completionTokens: forwardResponse.usage?.completion_tokens ||0,
+  totalTokens: totalFwdTokens,
+  requestId,
+  });
+  }
+
+  return res.json(forwardResponse);
+  }
  }
  }
 
@@ -745,6 +757,8 @@ async function handleChatRequest(
     const promptContent = body.messages.map(m => getContentString(m.content)).join('\n');
     const response = buildResponse(content, body.model, requestId, promptContent);
 
+    recordModelTpmUsage(body.model, response.usage.total_tokens, userId);
+
     if (userId && apiKeyId) {
       await recordUsageAndApplyBilling({
         userId,
@@ -761,11 +775,11 @@ async function handleChatRequest(
 
     res.json(response);
   } catch {
- clearTimeout(timeout);
- res.status(500).json({
- error: { message: 'Internal server error', type: 'server_error' },
- });
- }
+  clearTimeout(timeout);
+  res.status(500).json({
+  error: { message: 'Internal server error', type: 'server_error' },
+  });
+  }
  }
 }
 

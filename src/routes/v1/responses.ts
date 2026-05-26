@@ -7,6 +7,7 @@ import { broadcastRequest } from '../../websocket.js';
 import { getModel, validateApiKey, selectProviderKeyRoundRobin, getProviderById } from '../../storage.js';
 import { getConnectedClientsCount } from '../../websocket.js';
 import { forwardChatRequest, isModelForwardingConfigured } from '../../forwarder.js';
+import { modelRateLimitMiddleware, recordModelTpmUsage } from '../../middleware.js';
 
 const router: RouterType = Router();
 
@@ -122,7 +123,7 @@ async function resolveRuntimeModel(model: Model, modelId: string, res: Response)
 }
 
 // POST /v1/responses - OpenAI Responses API
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response) => {
  // 验证 API Key
  const apiKeyStr = extractApiKey(req);
  if (apiKeyStr) {

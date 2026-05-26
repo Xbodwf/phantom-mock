@@ -4,8 +4,12 @@ import { getActionByName, getAllApiKeys, getUserById } from '../../../storage.js
 import { generateRequestId } from '../../../responseBuilder.js';
 import { executeAction } from '../../../actions/executor.js';
 import { extractApiKey } from '../utils.js';
+import { modelRateLimitMiddleware, recordModelTpmUsage, type AuthRequest } from '../../../middleware.js';
 
 const router: Router = Router();
+
+// 速率限制：读取模型配置中的 rpm / tpm / maxConcurrentRequests
+router.post('/', modelRateLimitMiddleware());
 
 /**
  * POST /v1/actions/completions - 调用 Action 模型
@@ -126,6 +130,11 @@ router.post('/', async (req: Request, res: Response) => {
   try {
     const executionResult = await executeAction(action, input, 30000, userId, apiKeyId);
 
+    const totalTokens = (executionResult.usage?.promptTokens || 0) + (executionResult.usage?.completionTokens || 0);
+
+    // 记录模型 TPM 使用量
+    recordModelTpmUsage(body.model, totalTokens, userId);
+
     return res.json({
       id: generateRequestId(),
       object: 'chat.completion',
@@ -142,7 +151,7 @@ router.post('/', async (req: Request, res: Response) => {
       usage: {
         prompt_tokens: executionResult.usage?.promptTokens || 0,
         completion_tokens: executionResult.usage?.completionTokens || 0,
-        total_tokens: (executionResult.usage?.promptTokens || 0) + (executionResult.usage?.completionTokens || 0),
+        total_tokens: totalTokens,
       },
     });
   } catch (error) {

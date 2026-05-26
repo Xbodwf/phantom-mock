@@ -1,9 +1,109 @@
-import { VM } from 'vm2';
+import { Worker } from 'worker_threads';
 import { compileTypeScript, preprocessActionCode, extractMetadata } from './compiler.js';
 import type { Action, Workflow, WorkflowRun, StepRun } from '../types.js';
 import { ExecutionContext } from './context.js';
-import { internalChatCompletion } from './chatCompletion.js';
-import { createSandboxInterfaces } from './sandboxInterfaces.js';
+
+const WORKER_CODE = `
+const { parentPort, workerData } = require('worker_threads');
+const vm = require('vm');
+
+const sandboxGlobals = {
+  console: {
+    log: (...args) => parentPort.postMessage({ type: 'log', args }),
+    error: (...args) => parentPort.postMessage({ type: 'log', args }),
+    warn: (...args) => parentPort.postMessage({ type: 'log', args }),
+    info: (...args) => parentPort.postMessage({ type: 'log', args }),
+  },
+  fetch: globalThis.fetch,
+  JSON: globalThis.JSON,
+  Math: globalThis.Math,
+  Date: globalThis.Date,
+  Array: globalThis.Array,
+  Object: globalThis.Object,
+  String: globalThis.String,
+  Number: globalThis.Number,
+  Boolean: globalThis.Boolean,
+  Promise: globalThis.Promise,
+  setTimeout: globalThis.setTimeout,
+  setInterval: globalThis.setInterval,
+};
+
+const { compiledCode, input, timeout, baseUrl, usageTracker: ut } = workerData;
+const usageTracker = { ...ut };
+
+async function callChatCompletion(params) {
+  const url = baseUrl + '/v1/chat/completions';
+  const headers = { 'Content-Type': 'application/json' };
+  if (usageTracker.userId) headers['x-internal-user-id'] = usageTracker.userId;
+  if (usageTracker.apiKeyId) headers['x-internal-api-key-id'] = usageTracker.apiKeyId;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(params),
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error?.message || 'Chat completion failed');
+  }
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+const sandbox = Object.assign({}, sandboxGlobals, {
+  callChatCompletion,
+  __usageTracker: usageTracker,
+  __getUsageTracker: () => usageTracker,
+  module: { exports: {} },
+  exports: {},
+});
+
+const context = vm.createContext(sandbox);
+
+// Wrap compiled code to receive module & exports, inject callChatCompletion from sandbox scope
+const wrapperSrc =
+  '(function(module, exports) { var __usageTracker = ' + JSON.stringify(usageTracker) + '; ' +
+  'var __baseUrl = ' + JSON.stringify(baseUrl) + '; ' +
+  'async function callChatCompletion(params) { var u = __baseUrl + "/v1/chat/completions"; ' +
+  'var h = {"Content-Type":"application/json"}; ' +
+  'if(__usageTracker.userId) h["x-internal-user-id"] = __usageTracker.userId; ' +
+  'if(__usageTracker.apiKeyId) h["x-internal-api-key-id"] = __usageTracker.apiKeyId; ' +
+  'var r = await fetch(u,{method:"POST",headers:h,body:JSON.stringify(params)}); ' +
+  'if(!r.ok){var e=await r.json();throw new Error((e.error&&e.error.message)||"Chat completion failed")} ' +
+  'var d = await r.json(); return (d.choices&&d.choices[0]&&d.choices[0].message) ? d.choices[0].message.content : ""; } ' +
+  compiledCode + ' })';
+
+try {
+  const script = new vm.Script(wrapperSrc, { timeout });
+  const factory = script.runInContext(context, { timeout });
+
+  if (typeof factory !== 'function') {
+    throw new Error('Action code did not produce a valid module factory');
+  }
+
+  factory(sandbox.module, sandbox.module.exports);
+
+  if (typeof sandbox.module.exports.execute !== 'function') {
+    throw new Error('Action code must export an "execute" function');
+  }
+
+  const normalizedInput = typeof input === 'object' ? input : { text: input };
+  const result = await sandbox.module.exports.execute(normalizedInput);
+
+  parentPort.postMessage({
+    type: 'result',
+    result,
+    usage: {
+      promptTokens: usageTracker.promptTokens || 0,
+      completionTokens: usageTracker.completionTokens || 0,
+    },
+  });
+} catch (error) {
+  parentPort.postMessage({
+    type: 'error',
+    message: error instanceof Error ? error.message : 'Unknown error',
+  });
+}
+`;
 
 /**
  * 验证输入参数是否符合 Action 定义
@@ -20,7 +120,6 @@ function validateInputs(input: Record<string, any>, parameters?: any[]): void {
       const value = input[param.name];
       const expectedType = param.type;
 
-      // 简单的类型检查
       if (expectedType && typeof value !== expectedType) {
         throw new Error(
           `Parameter '${param.name}' must be ${expectedType}, got ${typeof value}`
@@ -44,121 +143,79 @@ function validateOutputs(output: any, returnType?: string): void {
 }
 
 /**
- * 执行 Action 代码
- * @param action Action 定义
- * @param input 输入参数
- * @param timeout 超时时间（毫秒）
- * @param userId 用户 ID（用于计费）
- * @returns 执行结果和使用统计
+ * 执行 Action 代码（使用 worker_threads + Node.js vm 隔离）
  */
 export async function executeAction(
   action: Action,
   input: Record<string, any>,
   timeout: number = 30000,
   userId?: string,
-  apiKeyId?: string
+  apiKeyId?: string,
+  memoryLimitMB: number = 128
 ): Promise<{ result: Record<string, any>; usage?: { promptTokens: number; completionTokens: number } }> {
   try {
-    // 1. 预处理代码
     const processedCode = preprocessActionCode(action.code);
-
-    // 2. 编译 TypeScript 为 JavaScript
     const compiledCode = compileTypeScript(processedCode);
 
-    // 3. 验证输入参数
     validateInputs(input, action.parameters);
 
-    // 4. 在 vm2 中执行代码
-    // 创建沙箱接口
-    // 创建使用统计跟踪器
-    const usageTracker = {
-      promptTokens: 0,
-      completionTokens: 0,
-      userId,
-      apiKeyId,
-    };
-
-    console.log('[executeAction] Creating usageTracker:', { userId, apiKeyId });
-
-    const sandboxInterfaces = createSandboxInterfaces(usageTracker);
-
-    const vm = new VM({
-      timeout,
-      sandbox: sandboxInterfaces,
-    });
-
-    // 5. 在 VM 中执行代码并获取 execute 函数
-    const module: { exports: any } = { exports: {} };
-
-    // 获取服务器基础URL
     const port = process.env.PORT || 7143;
     const serverHost = process.env.SERVER_HOST || 'localhost';
     const baseUrl = `http://${serverHost}:${port}`;
 
-    // 在VM代码中注入callChatCompletion函数和usageTracker
-    const vmCode = `
-      (function(module, exports) {
-        const __usageTracker = ${JSON.stringify(usageTracker)};
-        const __baseUrl = ${JSON.stringify(baseUrl)};
+    const result = await new Promise<{ result: any; usage: { promptTokens: number; completionTokens: number } }>((resolve, reject) => {
+      const worker = new Worker(WORKER_CODE, {
+        eval: true,
+        workerData: {
+          compiledCode,
+          input,
+          timeout,
+          baseUrl,
+          usageTracker: {
+            promptTokens: 0,
+            completionTokens: 0,
+            userId,
+            apiKeyId,
+          },
+        },
+        resourceLimits: {
+          maxOldGenerationSizeMb: memoryLimitMB,
+        },
+      });
 
-        // 在沙箱内部定义callChatCompletion，这样它可以访问__usageTracker
-        async function callChatCompletion(params) {
-          const url = __baseUrl + '/v1/chat/completions';
+      const timeoutHandle = setTimeout(() => {
+        worker.terminate();
+        reject(new Error(`Action execution timed out after ${timeout}ms`));
+      }, timeout + 5000);
 
-          const headers = {
-            'Content-Type': 'application/json',
-          };
-
-          if (__usageTracker?.userId) {
-            headers['x-internal-user-id'] = __usageTracker.userId;
-          }
-          if (__usageTracker?.apiKeyId) {
-            headers['x-internal-api-key-id'] = __usageTracker.apiKeyId;
-          }
-
-          const response = await fetch(url, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(params),
-          });
-
-          if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error?.message || 'Chat completion failed');
-          }
-
-          const data = await response.json();
-          if (data.choices && data.choices[0] && data.choices[0].message) {
-            return data.choices[0].message.content;
-          }
-          throw new Error('Invalid response format');
+      worker.on('message', (msg) => {
+        if (msg.type === 'result') {
+          clearTimeout(timeoutHandle);
+          resolve({ result: msg.result, usage: msg.usage });
+        } else if (msg.type === 'error') {
+          clearTimeout(timeoutHandle);
+          reject(new Error(msg.message));
+        } else if (msg.type === 'log') {
+          console.log('[Action Worker]', ...msg.args);
         }
+      });
 
-        ${compiledCode}
-      })
-    `;
+      worker.on('error', (err) => {
+        clearTimeout(timeoutHandle);
+        reject(new Error(`Worker error: ${err.message}`));
+      });
 
-    const result = vm.run(vmCode);
-    result(module, module.exports);
+      worker.on('exit', (code) => {
+        clearTimeout(timeoutHandle);
+        if (code !== 0 && !timeoutHandle) {
+          reject(new Error(`Worker exited with code ${code}`));
+        }
+      });
+    });
 
-    if (typeof module.exports.execute !== 'function') {
-      throw new Error('Action code must export an "execute" function');
-    }
+    validateOutputs(result.result, action.returnType);
 
-    // 6. 调用 execute 函数，确保 input 是对象
-    const normalizedInput = typeof input === 'object' ? input : { text: input };
-    const actionResult = await module.exports.execute(normalizedInput);
-
-    // 7. 验证输出
-    validateOutputs(actionResult, action.returnType);
-
-    return {
-      result: actionResult,
-      usage: {
-        promptTokens: usageTracker.promptTokens,
-        completionTokens: usageTracker.completionTokens,
-      },
-    };
+    return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     throw new Error(`Action execution failed: ${errorMessage}`);
@@ -167,21 +224,19 @@ export async function executeAction(
 
 /**
  * 获取 Action 的元数据
- * @param action Action 定义
- * @returns 元数据对象
  */
 export function getActionMetadata(action: Action): any {
   try {
     const processedCode = preprocessActionCode(action.code);
     const compiledCode = compileTypeScript(processedCode);
     const metadata = extractMetadata(compiledCode);
-    
+
     if (!metadata) {
       console.log('[getActionMetadata] No metadata found in action code');
     } else {
       console.log('[getActionMetadata] Extracted metadata:', Object.keys(metadata));
     }
-    
+
     return metadata;
   } catch (error) {
     console.error('[getActionMetadata] Error extracting metadata:', error);
@@ -191,8 +246,6 @@ export function getActionMetadata(action: Action): any {
 
 /**
  * 验证 Action 代码是否有效
- * @param code Action 代码
- * @returns 是否有效
  */
 export function validateActionCode(code: string): { valid: boolean; error?: string } {
   try {
@@ -225,17 +278,12 @@ export class WorkflowExecutor {
     this.context = context;
   }
 
-  /**
-   * 执行工作流
-   */
   async execute(): Promise<WorkflowRun> {
     this.workflowRun.status = 'running';
     this.workflowRun.startedAt = Date.now();
 
     try {
-      // 执行所有步骤
       for (const step of this.workflow.steps) {
-        // 检查条件
         if (step.if) {
           const condition = this.context.evaluateExpression(step.if);
           if (!condition) {
@@ -244,11 +292,9 @@ export class WorkflowExecutor {
           }
         }
 
-        // 执行步骤
         const stepRun = await this.executeStep(step);
         this.workflowRun.stepRuns.push(stepRun);
 
-        // 如果步骤失败且不继续，停止执行
         if (stepRun.status === 'failure' && !step.continueOnError) {
           this.workflowRun.status = 'failure';
           this.workflowRun.error = {
@@ -259,7 +305,6 @@ export class WorkflowExecutor {
         }
       }
 
-      // 生成输出
       if (this.workflow.outputs) {
         this.workflowRun.outputs = {};
         for (const [key, output] of Object.entries(this.workflow.outputs)) {
@@ -268,7 +313,6 @@ export class WorkflowExecutor {
         }
       }
 
-      // 更新状态
       if (this.workflowRun.status !== 'failure') {
         this.workflowRun.status = 'success';
       }
@@ -281,7 +325,6 @@ export class WorkflowExecutor {
       this.context.addLog(`Workflow execution failed: ${error}`, 'error');
     }
 
-    // 完成执行
     this.workflowRun.completedAt = Date.now();
     this.workflowRun.duration = this.workflowRun.completedAt - this.workflowRun.startedAt;
     this.workflowRun.logs = this.context.getLogs();
@@ -289,9 +332,6 @@ export class WorkflowExecutor {
     return this.workflowRun;
   }
 
-  /**
-   * 执行单个步骤
-   */
   private async executeStep(step: any): Promise<StepRun> {
     const stepRun: StepRun = {
       id: `${this.workflowRun.id}-${step.id}`,
@@ -305,17 +345,11 @@ export class WorkflowExecutor {
       this.context.addLog(`Starting step: ${step.name}`, 'info');
       stepRun.status = 'running';
 
-      // 解析输入参数
       const inputs = this.context.replaceExpressions(step.with || {});
       stepRun.inputs = inputs;
 
-      // 验证 Action 存在
-      const actionId = step.uses.split('@')[0];
-      // 这里应该调用实际的 Action 执行逻辑
-      // 目前返回占位符
       const outputs = { result: 'placeholder' };
 
-      // 记录输出
       this.context.setStepOutput(step.id, outputs);
       stepRun.outputs = outputs;
       stepRun.status = 'success';
@@ -337,9 +371,6 @@ export class WorkflowExecutor {
   }
 }
 
-/**
- * 创建工作流执行器
- */
 export function createWorkflowExecutor(
   workflow: Workflow,
   workflowRun: WorkflowRun,
@@ -348,19 +379,12 @@ export function createWorkflowExecutor(
   return new WorkflowExecutor(workflow, workflowRun, context);
 }
 
-/**
- * 向后兼容：执行 Action 链
- * 这是旧的 API，用于支持现有的组合模型功能
- */
 export async function executeActionChain(
   actionIds: string[],
   context: any,
   initialInput?: any
 ): Promise<{ success: boolean; output?: any; error?: string; executionTime: number }> {
   const startTime = Date.now();
-
-  // 这是一个占位符实现
-  // 实际的 Action 链执行应该通过新的工作流系统实现
   return {
     success: true,
     output: initialInput,

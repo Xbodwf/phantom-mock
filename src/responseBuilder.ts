@@ -63,7 +63,7 @@ export function buildStreamChunk(
 export function buildToolCallChunk(
   requestId: string,
   model: string,
-  toolCall: { id: string; name: string; arguments: string },
+  toolCall: { id: string; name: string; arguments: string; extraContent?: any },
   index: number,
   isFirst: boolean = false
 ): string {
@@ -90,6 +90,10 @@ export function buildToolCallChunk(
       arguments: toolCall.arguments,
     },
   }];
+
+  if (toolCall.extraContent !== undefined) {
+    chunk.choices[0].delta.tool_calls[0].extra_content = toolCall.extraContent;
+  }
 
   return `data: ${JSON.stringify(chunk)}\n\n`;
 }

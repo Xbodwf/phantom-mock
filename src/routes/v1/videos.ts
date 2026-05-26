@@ -5,6 +5,7 @@ import { addPendingRequest, removePendingRequest } from '../../requestStore.js';
 import { generateRequestId } from '../../responseBuilder.js';
 import { broadcastRequest } from '../../websocket.js';
 import { getModel, validateApiKey } from '../../storage.js';
+import { modelRateLimitMiddleware, recordModelTpmUsage } from '../../middleware.js';
 
 const router: RouterType = Router();
 
@@ -22,7 +23,7 @@ function extractApiKey(req: Request): string | null {
 }
 
 // POST /v1/videos/generations - 视频生成
-router.post('/generations', async (req: Request, res: Response) => {
+router.post('/generations', modelRateLimitMiddleware(), async (req: Request, res: Response) => {
   // 验证 API Key
   const apiKeyStr = extractApiKey(req);
   if (apiKeyStr) {

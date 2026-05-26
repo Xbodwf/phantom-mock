@@ -985,7 +985,19 @@ async function forwardAnthropicStream(
                 onStreamData?.({ content: '', reasoningContent: delta.thinking || '' });
               }
               if (delta.type === 'signature_delta') {
-                // signature 不需要透传到前端
+                // 透传 thought_signature，客户端可能在后续请求中需要
+                const openaiChunk = {
+                  id: requestId,
+                  object: 'chat.completion.chunk',
+                  created: Math.floor(Date.now() / 1000),
+                  model: body.model,
+                  choices: [{
+                    index: 0,
+                    delta: { content: '', thought_signature: delta.signature || '' },
+                    finish_reason: null,
+                  }],
+                };
+                res.write(`data: ${JSON.stringify(openaiChunk)}\n\n`);
               }
             }
 

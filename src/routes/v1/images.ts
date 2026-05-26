@@ -7,6 +7,7 @@ import { broadcastRequest } from '../../websocket.js';
 import { getModel, validateApiKey, createUsageRecord, getUserById, updateUser } from '../../storage.js';
 import { isModelForwardingConfigured } from '../../forwarder.js';
 import { calculateCost, calculateTokens } from '../../billing.js';
+import { modelRateLimitMiddleware, recordModelTpmUsage } from '../../middleware.js';
 import multer from 'multer';
 import path from 'path';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
@@ -207,7 +208,7 @@ async function waitForImageResponse(
 }
 
 // POST /v1/images/generations - 图片生成
-router.post('/generations', async (req: Request, res: Response) => {
+router.post('/generations', modelRateLimitMiddleware(), async (req: Request, res: Response) => {
   const body = req.body as ImageGenerationRequest;
 
   if (!body.prompt) {
@@ -292,7 +293,7 @@ router.post('/generations', async (req: Request, res: Response) => {
 });
 
 // POST /v1/images/edits - 图片编辑（支持 multipart 上传 + JSON 两种格式）
-router.post(['/edits', '/edit'], upload.any(), async (req: Request, res: Response) => {
+router.post(['/edits', '/edit'], modelRateLimitMiddleware(), upload.any(), async (req: Request, res: Response) => {
   const body = req.body;
   const files = req.files as Express.Multer.File[] | undefined;
 

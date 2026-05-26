@@ -7,6 +7,7 @@ import { broadcastRequest, getConnectedClientsCount } from '../../websocket.js';
 import { hasReverseClients, broadcastRequestToReverseClients } from '../../reverseWebSocket.js';
 import { getModel } from '../../storage.js';
 import { forwardChatRequest, isModelForwardingConfigured } from '../../forwarder.js';
+import { modelRateLimitMiddleware, recordModelTpmUsage } from '../../middleware.js';
 
 const router: RouterType = Router();
 
@@ -67,7 +68,7 @@ function dispatchPendingRequest(pending: PendingRequest) {
 }
 
 // POST /v1/messages - Anthropic Messages API
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response) => {
  const body = req.body;
 
  if (!body.model) {

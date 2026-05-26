@@ -16,6 +16,7 @@ import { calculateCost } from '../../billing.js';
 import { generateRequestId } from '../../responseBuilder.js';
 import { extractApiKey } from './utils.js';
 import { standardizeErrorResponse, isModelForwardingConfigured, resolveForwardUrl, getForwardModelName } from '../../forwarder.js';
+import { modelRateLimitMiddleware, recordModelTpmUsage } from '../../middleware.js';
 
 const router: Router = Router();
 
@@ -104,7 +105,7 @@ async function recordUsageAndApplyBilling(params: {
  * POST /v1/rerank - 文档重排序
  * 支持 Cohere 风格的 Rerank API
  */
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response) => {
  const body = req.body as RerankRequest;
 
  if (!body.model || !body.query || !body.documents || !Array.isArray(body.documents)) {

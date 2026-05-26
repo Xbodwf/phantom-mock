@@ -5,13 +5,14 @@ import { generateRequestId } from '../../responseBuilder.js';
 import { forwardEmbeddingsRequest, isModelForwardingConfigured, shouldUseNodeForwarding } from '../../forwarder.js';
 import { addPendingRequest, removePendingRequest } from '../../requestStore.js';
 import { sendRequestToNode, isNodeConnected } from '../../reverseWebSocket.js';
+import { modelRateLimitMiddleware, recordModelTpmUsage } from '../../middleware.js';
 
 const router: Router = Router();
 
 /**
  * POST /v1/embeddings - 向量嵌入
  */
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response) => {
  const modelId = req.body.model;
 
  if (!modelId) {

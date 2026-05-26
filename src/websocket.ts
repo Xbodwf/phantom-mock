@@ -106,27 +106,30 @@ function handleClientMessage(ws: WebSocket, msg: WSMessage) {
       removePendingRequest(requestId);
       console.log('[WS] 流式请求已完成:', requestId);
     } else if (msg.type === 'tool_call') {
-      const toolCalls: Array<{ id: string; name: string; arguments: string }> = payload.toolCalls || [];
+      const toolCalls: Array<{ id: string; name: string; arguments: string; extraContent?: any }> = payload.toolCalls || [];
       console.log('[WS] 工具调用请求:', requestId, toolCalls);
 
       if (req.streamController) {
         // 流式：每个 tool call 发送独立 SSE 块，不关闭流（可继续发 text 或更多 tool call）
         const model = req.request?.model || 'unknown';
+        const tcWithExtra = toolCalls.map(tc => ({
+          ...tc,
+          extraContent: (tc as any).extraContent || (tc as any).extra_content,
+        }));
         if (req.streamController.writeRaw) {
-          toolCalls.forEach((tc, idx) => {
+          tcWithExtra.forEach((tc, idx) => {
             req.streamController!.writeRaw!(buildToolCallChunk(requestId, model, tc, idx, idx === 0));
           });
           req.streamController!.writeRaw(buildToolCallFinishChunk(requestId, model));
         } else {
-          // fallback: enqueue as text
-          toolCalls.forEach((tc, idx) => {
+          tcWithExtra.forEach((tc, idx) => {
             req.streamController!.enqueue(buildToolCallChunk(requestId, model, tc, idx, idx === 0));
           });
           req.streamController!.enqueue(buildToolCallFinishChunk(requestId, model));
         }
       } else {
         // 非流式：构建带 tool_calls 的响应对象
-        const responseData = {
+        const responseData: any = {
           id: requestId,
           object: 'chat.completion',
           created: Math.floor(Date.now() / 1000),
@@ -136,14 +139,19 @@ function handleClientMessage(ws: WebSocket, msg: WSMessage) {
             message: {
               role: 'assistant',
               content: null,
-              tool_calls: toolCalls.map(tc => ({
-                id: tc.id,
-                type: 'function' as const,
-                function: {
-                  name: tc.name,
-                  arguments: tc.arguments,
-                },
-              })),
+              tool_calls: toolCalls.map(tc => {
+                const entry: any = {
+                  id: tc.id,
+                  type: 'function',
+                  function: {
+                    name: tc.name,
+                    arguments: tc.arguments,
+                  },
+                };
+                const extra = (tc as any).extraContent || (tc as any).extra_content;
+                if (extra !== undefined) entry.extra_content = extra;
+                return entry;
+              }),
             },
             finish_reason: 'tool_calls',
           }],
