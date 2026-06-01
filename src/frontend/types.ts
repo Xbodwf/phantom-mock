@@ -279,6 +279,7 @@ export interface Settings {
     port: number;
     enabled: boolean;
   }>; // TCP 客户端配置
+  forwarderTimeout?: number; // API 转发超时时间（秒）
 }
 
 // 导出别名，保持兼容

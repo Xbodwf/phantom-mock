@@ -2,7 +2,7 @@ import axios from 'axios';
 import type { ChatCompletionRequest, Model } from './types.js';
 import type { Response } from 'express';
 import { generateRequestId } from './responseBuilder.js';
-import { getProviderById, getNodeById } from './storage.js';
+import { getProviderById, getNodeById, getSettings } from './storage.js';
 
 /**
  * 部分隐藏 key，只显示前4位和后4位
@@ -154,6 +154,11 @@ export function isModelForwardingConfigured(model: Model): boolean {
 
  // 检查是否有 api_key 和 api_base_url（非 provider/node 模式的直接转发配置）
  return !!model.api_key && !!model.api_base_url;
+}
+
+async function getForwarderTimeoutMs(): Promise<number> {
+  const settings = await getSettings();
+  return (settings.forwarderTimeout ?? 1000) * 1000;
 }
 
 type ForwardEndpoint =
@@ -360,7 +365,7 @@ export async function forwardEmbeddingsRequest(
             'Content-Type': 'application/json',
             ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
           },
-          timeout: 120000,
+          timeout: await getForwarderTimeoutMs(),
         });
 
         // 转换Google格式到OpenAI格式
@@ -403,7 +408,7 @@ export async function forwardEmbeddingsRequest(
             'Content-Type': 'application/json',
             ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
           },
-          timeout: 120000,
+          timeout: await getForwarderTimeoutMs(),
         });
 
         // 转换Google格式到OpenAI格式
@@ -752,7 +757,7 @@ async function forwardToOpenAI(
 
   const axiosConfig: any = {
     headers,
-    timeout: 120000, // 2 分钟超时
+    timeout: await getForwarderTimeoutMs(), // 1000 秒超时
   };
 
   if (body.stream) {

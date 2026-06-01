@@ -39,15 +39,16 @@ export interface SystemSettings {
   smoothSpeed?: number;
   emailVerificationEnabled?: boolean;
  commission?: {
- enabled?: boolean;
- defaultRatio?: number;
- };
+  enabled?: boolean;
+  defaultRatio?: number;
+  };
   emailjs?: {
     serviceId: string;
     templateId: string;
     publicKey: string;
     privateKey: string;
   };
+  forwarderTimeout?: number;
 }
 
 export interface Config {
@@ -66,6 +67,7 @@ const defaultConfig: Config = {
     requireApiKey: false,
     smoothOutput: false,
     smoothSpeed: 20,
+    forwarderTimeout: 1000,
   },
 };
 

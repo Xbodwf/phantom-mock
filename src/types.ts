@@ -776,6 +776,7 @@ export interface SystemSettings {
   };
   // 联系支持配置
   supportEmail?: string; // 联系支持邮箱
+  forwarderTimeout?: number; // API 转发超时时间（秒），默认 1000
 }
 
 // Rerank API Types
