@@ -3551,6 +3551,7 @@ export function UserChatPage() {
             }}
           />
         </Box>
+        </Box>
       )}
 
       {/* 桌面端侧边栏 - 默认折叠 */}
