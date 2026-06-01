@@ -2628,6 +2628,8 @@ export function UserChatPage() {
           bottom: 0,
           display: 'flex',
           overflow: 'hidden',
+          pt: '64px',
+          boxSizing: 'border-box',
           background: theme.palette.mode === 'dark'
             ? 'radial-gradient(ellipse 80% 60% at 15% 40%, rgba(59,130,246,0.12) 0%, rgba(30,64,175,0.06) 40%, rgba(0,0,0,0.95) 100%)'
             : 'radial-gradient(ellipse 80% 60% at 15% 40%, rgba(59,130,246,0.06) 0%, rgba(30,64,175,0.03) 40%, rgba(248,250,252,1) 100%)',
