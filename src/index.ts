@@ -173,9 +173,11 @@ if (ssrEnabled) {
     }
 
     // SSR 尚未就绪，回退到静态文件
-    if (!ssrReady || !ssrRender || !ssrTemplate) {
-      return next();
-    }
+    if (!ssrReady) return next();
+    const curRender = ssrRender;
+    const curTemplate = ssrTemplate;
+    const curRenderTemplate = ssrRenderTemplate;
+    if (!curRender || !curTemplate || !curRenderTemplate) return next();
 
     try {
       const context: { url?: string; title?: string } = {};
@@ -199,13 +201,13 @@ if (ssrEnabled) {
         }
       }
 
-      const appHtml = ssrRender({ url: req.path, context });
+      const appHtml = curRender({ url: req.path, context });
       
       if (context.url) {
         return res.redirect(context.url);
       }
 
-      let html = ssrRenderTemplate(ssrTemplate, initialState).replace('<!--app-html-->', appHtml);
+      let html = curRenderTemplate(curTemplate, initialState).replace('<!--app-html-->', appHtml);
       
       if (context.title) {
         html = html.replace(/<title>.*?<\/title>/, `<title>${context.title}</title>`);
