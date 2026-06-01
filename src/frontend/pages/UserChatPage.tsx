@@ -2952,8 +2952,9 @@ export function UserChatPage() {
                     )}
                   </Box>
                 ))}
-              </Box>
-            )}
+        </Box>
+        </Box>
+      )}
 
             {/* 输入框容器 */}
             <Box
