@@ -1,7 +1,7 @@
 import { parse } from 'node-html-parser';
 import { getChatSessionById, updateChatSession, FileNode } from '../db/chatSessions.js';
 
-export const BUILTIN_TOOL_NAMES = new Set(['web_fetch', 'web_search', 'file_read', 'file_write', 'file_list']);
+export const BUILTIN_TOOL_NAMES = new Set(['web_fetch', 'web_search', 'terminal', 'file_read', 'file_write', 'file_list']);
 
 export function hasBuiltinTools(tools: any[]): boolean {
   if (!tools) return false;
@@ -61,7 +61,7 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'terminal',
-      description: 'Execute a terminal command in the WebContainer (browser-based Node.js environment). Supports all standard shell commands including git (via isomorphic-git CLI: npx isomorphic-git). Use this to run code, install dependencies, run git operations, or explore the project structure.',
+      description: 'Simulate a terminal command in the project workspace. Supports: ls, cat, node, npm, mkdir, touch, pwd, echo, clear. Use this to explore the project structure, run code, or install dependencies.',
       parameters: {
         type: 'object',
         properties: {
@@ -374,6 +374,9 @@ export async function executeBuiltinTool(
       break;
     case 'web_search':
       result = await executeWebSearch(args);
+      break;
+    case 'terminal':
+      result = await executeTerminal(args, sessionId);
       break;
     case 'file_read':
       result = await executeFileRead(args, sessionId);

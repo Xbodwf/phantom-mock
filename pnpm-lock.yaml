@@ -35,9 +35,6 @@ importers:
       '@mui/system':
         specifier: ^7.3.8
         version: 7.3.8(@emotion/react@11.14.0(@types/react@19.2.14)(react@19.2.4))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.2.14)(react@19.2.4))(@types/react@19.2.14)(react@19.2.4))(@types/react@19.2.14)(react@19.2.4)
-      '@webcontainer/api':
-        specifier: ^1.6.4
-        version: 1.6.4
       archiver:
         specifier: ^7.0.1
         version: 7.0.1
@@ -1993,9 +1990,6 @@ packages:
     engines: {node: ^20.19.0 || >=22.12.0}
     peerDependencies:
       vite: ^4.2.0 || ^5.0.0 || ^6.0.0 || ^7.0.0
-
-  '@webcontainer/api@1.6.4':
-    resolution: {integrity: sha512-r9sHCXg1FcC1AMgppGwAc0vYWaQhqvg282cnsuPbJEzYnWifAdCVvg+8ngJUEHyHcomhJJp+/zuytite4ITHLw==}
 
   '@xhmikosr/archive-type@8.0.1':
     resolution: {integrity: sha512-toXuiWChyfOpEiCPsIw6HGHaNji5LVkvB6EREL548vGWr+hGaehwxG4LzN20vm9aGFXwnA/Jty8yW2/SmV+1zQ==}
@@ -6131,8 +6125,6 @@ snapshots:
       vite: 8.0.8(@types/node@22.19.13)(esbuild@0.27.3)(terser@5.46.1)(tsx@4.21.0)
     transitivePeerDependencies:
       - supports-color
-
-  '@webcontainer/api@1.6.4': {}
 
   '@xhmikosr/archive-type@8.0.1':
     dependencies:

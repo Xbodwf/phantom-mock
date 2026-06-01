@@ -38,7 +38,6 @@ import {
   Fab,
   GlobalStyles,
 } from '@mui/material';
-import { WorkspacePanel } from '../components/WorkspacePanel';
 import {
   Send,
   Plus,
@@ -49,14 +48,11 @@ import {
   Menu as MenuIcon,
   MessageSquare,
   Paperclip,
-  PanelRightClose,
-  PanelRightOpen,
   X,
   Copy,
   RotateCcw,
   Check,
   ChevronDown,
-  ChevronUp,
   Sparkles,
   Brain,
   Wrench,
@@ -770,83 +766,82 @@ interface ToolCallBlockProps {
   toolCalls: ToolCall[];
 }
 
-const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockProps) {
-  const { t = (key: string, defaultValue?: string) => defaultValue || key } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
+const TOOL_FRIENDLY_NAMES: Record<string, string> = {
+  terminal: '终端',
+  web_search: '搜索',
+  web_fetch: '网页获取',
+  file_read: '读取文件',
+  file_write: '写入文件',
+  file_list: '列出文件',
+};
 
+function formatToolArgs(tool: ToolCall): string {
+  if (tool.name === 'terminal') {
+    try {
+      const args = JSON.parse(tool.arguments);
+      return args.command || '';
+    } catch { return tool.arguments; }
+  }
+  if (tool.name === 'web_search') {
+    try {
+      const args = JSON.parse(tool.arguments);
+      return args.query || '';
+    } catch { return tool.arguments; }
+  }
+  if (tool.name === 'web_fetch') {
+    try {
+      const args = JSON.parse(tool.arguments);
+      return args.url || '';
+    } catch { return tool.arguments; }
+  }
+  return tool.arguments;
+}
+
+const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockProps) {
   return (
-    <Box sx={{ mb: 1.5 }}>
-      <Box
-        onClick={() => setExpanded(!expanded)}
-        sx={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 0.5,
-          cursor: 'pointer',
-          userSelect: 'none',
-          color: 'text.secondary',
-          '&:hover': { color: 'text.primary' },
-          transition: 'color 0.15s',
-        }}
-      >
-        <Wrench size={12} />
-        <Typography variant="caption" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-          {t('chat.toolCallsCalled', { count: toolCalls.length })}
-        </Typography>
-        {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-      </Box>
-      <Collapse in={expanded}>
-        <Box sx={{ mt: 0.5, pl: 1.5, ml: 1, borderLeft: 2, borderColor: 'divider' }}>
-          {toolCalls.map((tool, index) => (
-            <Box
-              key={tool.id || index}
-              sx={{
-                mt: index > 0 ? 1 : 0,
-                p: 1,
-                bgcolor: 'action.hover',
-                borderRadius: '8px',
-              }}
-            >
-              <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary', mb: 0.5 }}>
-                {tool.name}
-              </Typography>
-              <Typography
-                variant="caption"
-                component="pre"
-                sx={{
-                  fontFamily: 'monospace',
-                  fontSize: '0.75rem',
-                  color: 'text.secondary',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                }}
-              >
-                {tool.arguments}
-              </Typography>
-              {tool.result && (
-                <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
-                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                    {t('chat.result')}:
-                  </Typography>
-                  <Typography
-                    variant="caption"
-                    component="pre"
-                    sx={{
-                      fontFamily: 'monospace',
-                      fontSize: '0.75rem',
-                      color: 'text.primary',
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-all',
-                    }}
-                  >
-                    {tool.result}
-                  </Typography>
-                </Box>
-              )}
-            </Box>
-          ))}
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 1.5 }}>
+      {toolCalls.map((tool, index) => (
+        <Box
+          key={tool.id || index}
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 1,
+            px: 1.5,
+            py: 0.7,
+            bgcolor: 'action.hover',
+            borderRadius: '8px',
+            alignSelf: 'flex-start',
+            maxWidth: '100%',
+          }}
+        >
+          <Wrench size={13} />
+          <Typography
+            variant="caption"
+            sx={{
+              fontWeight: 600,
+              color: 'text.secondary',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {TOOL_FRIENDLY_NAMES[tool.name] || tool.name}:
+          </Typography>
+          <Typography
+            variant="caption"
+            component="span"
+            sx={{
+              fontFamily: 'monospace',
+              fontSize: '0.75rem',
+              color: 'text.primary',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {formatToolArgs(tool)}
+          </Typography>
         </Box>
-      </Collapse>
+      ))}
     </Box>
   );
 });
@@ -1280,8 +1275,6 @@ export function UserChatPage() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '' });
   const [isReadOnly, setIsReadOnly] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [webContainerStatus, setWebContainerStatus] = useState<string>('idle');
 
   // 队列和流式控制
   const [messageQueue, setMessageQueue] = useState<Array<{ input: string; files: UploadedFile[] }>>([]);
@@ -1335,60 +1328,6 @@ export function UserChatPage() {
     return sessions.find((s) => s.id === currentSessionId) || null;
   }, [sessions, currentSessionId]);
 
-  // 将 fileTree 转为 WebContainer 挂载格式
-  const toWebContainerTree = useCallback((nodes: FileNode[]): Record<string, any> => {
-    const tree: Record<string, any> = {};
-    for (const node of nodes) {
-      if (node.type === 'directory') {
-        tree[node.name] = { directory: toWebContainerTree(node.children || []) };
-      } else {
-        tree[node.name] = { file: { contents: node.content || '' } };
-      }
-    }
-    return tree;
-  }, []);
-
-  // WebContainer 启动：当 session 有 fileTree 时自动 boot
-  useEffect(() => {
-    if (!currentSession?.fileTree || currentSession.fileTree.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        setWebContainerStatus('booting');
-        const { WebContainer } = await import('@webcontainer/api');
-        const instance = await WebContainer.boot();
-        if (cancelled) return;
-        (window as any).__webcontainer = instance;
-        setWebContainerStatus('ready');
-        console.log('[WebContainer] Booted');
-
-        await instance.fs.mount(toWebContainerTree(currentSession.fileTree));
-        console.log('[WebContainer] Files mounted');
-      } catch (e: any) {
-        if (!cancelled) {
-          console.error('[WebContainer] Boot failed:', e);
-          setWebContainerStatus('error');
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [currentSession?.id]);
-
-  // 热同步：fileTree 变化时重新挂载
-  useEffect(() => {
-    if (!currentSession?.fileTree) return;
-    const instance = (window as any).__webcontainer;
-    if (!instance) return;
-    (async () => {
-      try {
-        await instance.fs.mount(toWebContainerTree(currentSession.fileTree));
-        console.log('[WebContainer] Files re-mounted');
-      } catch (e: any) {
-        console.error('[WebContainer] Re-mount failed:', e);
-      }
-    })();
-  }, [currentSession?.fileTree, toWebContainerTree]);
-
   // 流结束后拉取最新 session（获取 DB 中更新的 fileTree）
   useEffect(() => {
     if (!currentSessionId || loading) return;
@@ -1404,23 +1343,6 @@ export function UserChatPage() {
     const timer = setTimeout(check, 500);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [loading, currentSessionId, loadSessionFromServer, setSessions]);
-
-  // webContainer 工具函数
-  const webContainerSpawn = useCallback(async (command: string, args?: string[]): Promise<{ output: string; exitCode: number }> => {
-    const instance = (window as any).__webcontainer;
-    if (!instance) return { output: '[WebContainer] Not booted', exitCode: 1 };
-    try {
-      const process = await instance.spawn(command, args || []);
-      let output = '';
-      process.output.pipeTo(new WritableStream({
-        write(data: string) { output += data; },
-      }));
-      const exitCode = await process.exit;
-      return { output, exitCode };
-    } catch (e: any) {
-      return { output: `Error: ${e.message}`, exitCode: 1 };
-    }
-  }, []);
 
   // ==================== 滚动控制 ====================
 
@@ -2310,125 +2232,7 @@ export function UserChatPage() {
             });
           });
 
-          // 终端工具：在 WebContainer 中执行，继续对话
-          const terminalTcs = toolCalls.filter(tc => tc.name === 'terminal');
-          if (terminalTcs.length > 0) {
-            const instance = (window as any).__webcontainer;
-            const toolResults: Array<{ role: string; tool_call_id: string; content: string }> = [];
-            for (const tc of terminalTcs) {
-              let args: any = {};
-              try { args = JSON.parse(tc.arguments); } catch { args = {}; }
-              const cmd = args.command || '';
-              if (instance) {
-                const parts = cmd.trim().split(/\s+/);
-                const command = parts[0];
-                const cmdArgs = parts.slice(1);
-                try {
-                  const proc = await instance.spawn(command, cmdArgs);
-                  let output = '';
-                  proc.output.pipeTo(new WritableStream({
-                    write(data: string) { output += data; },
-                  }));
-                  const exitCode = await proc.exit;
-                  toolResults.push({ role: 'tool', tool_call_id: tc.id, content: output || `(exit code: ${exitCode})` });
-                } catch (e: any) {
-                  toolResults.push({ role: 'tool', tool_call_id: tc.id, content: `Error: ${e.message}` });
-                }
-              } else {
-                toolResults.push({ role: 'tool', tool_call_id: tc.id, content: `Error: WebContainer not available. Please ensure a project is loaded (upload a zip or create files first).` });
-              }
-            }
-
-            // Build follow-up request
-            const assistantToolCall = {
-              role: 'assistant' as const,
-              content: null,
-              tool_calls: terminalTcs.map(tc => ({
-                id: tc.id,
-                type: 'function',
-                function: { name: tc.name, arguments: tc.arguments },
-              })),
-            };
-            const followUpMessages = [
-              ...messagesToSend,
-              assistantToolCall,
-              ...toolResults,
-            ];
-            const followUpBody = {
-              model: session.model,
-              messages: followUpMessages,
-              stream: session.stream,
-              sessionId: currentSessionId,
-              thinking: session.thinking || false,
-            };
-
-            try {
-              const contRes = await fetch('/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify(followUpBody),
-                signal: controller.signal,
-              });
-              if (contRes.ok && session.stream) {
-                const contReader = contRes.body?.getReader();
-                if (contReader) {
-                  let buf = '';
-                  while (true) {
-                    const { done, value } = await contReader.read();
-                    if (done) break;
-                    buf += decoder.decode(value, { stream: true });
-                    const lines = buf.split('\n');
-                    buf = lines.pop() || '';
-                    for (const line of lines) {
-                      if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') continue;
-                        try {
-                          const parsed = JSON.parse(data);
-                          const choice = parsed.choices?.[0];
-                          const delta = choice?.delta;
-                          if (delta?.reasoning_content) {
-                            reasoningContentRef.current += delta.reasoning_content;
-                          }
-                          if (delta?.content) {
-                            streamContentRef.current += delta.content;
-                          }
-                        } catch {}
-                      }
-                    }
-                    // 渐进更新 UI
-                    updateContent();
-                  }
-                }
-              }
-            } catch (e: any) {
-              console.error('[Chat] Terminal follow-up failed:', e);
-            }
-
-            // Final update after continuation
-            finalMessages = await new Promise<any[]>((resolve) => {
-              setSessions((prev) => {
-                const target = prev.find(s => s.id === currentSessionId);
-                if (!target) return prev;
-                const messages = [...target.messages];
-                const lastIndex = messages.length - 1;
-                if (messages[lastIndex]) {
-                  const msg: any = { ...messages[lastIndex] };
-                  msg.content = streamContentRef.current;
-                  msg.model = session.model;
-                  if (reasoningContentRef.current) {
-                    msg.reasoning_content = reasoningContentRef.current;
-                  }
-                  msg._isStreaming = undefined;
-                  messages[lastIndex] = msg;
-                }
-                resolve(messages);
-                return prev.map((s) =>
-                  s.id === currentSessionId ? { ...s, messages } : s
-                );
-              });
-            });
-          }
+          // 终端工具由服务器端执行，前端无需处理
 
           // 同步到服务器
           updateSession(currentSessionId, { messages: finalMessages }).catch(err => {
@@ -3706,44 +3510,25 @@ export function UserChatPage() {
           variant="permanent"
           anchor="right"
           sx={{
-            width: sidebarCollapsed ? 48 : DRAWER_WIDTH,
+            width: DRAWER_WIDTH,
             flexShrink: 0,
-            transition: 'width 0.2s ease',
             '& .MuiDrawer-paper': {
-              width: sidebarCollapsed ? 48 : DRAWER_WIDTH,
+              width: DRAWER_WIDTH,
               boxSizing: 'border-box',
               borderLeft: 1,
               borderColor: 'divider',
               borderRight: 'none',
               position: 'relative',
-              transition: 'width 0.2s ease',
               overflow: 'hidden',
             },
           }}
         >
-          {sidebarCollapsed ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
-              <Tooltip title="展开会话列表">
-                <IconButton size="small" onClick={() => setSidebarCollapsed(false)}>
-                  <PanelRightOpen size={18} />
-                </IconButton>
-              </Tooltip>
-            </Box>
-          ) : (
-            <>
-              <Box sx={{ display: 'flex', alignItems: 'center', px: 1, py: 0.5, borderBottom: 1, borderColor: 'divider' }}>
-                <Typography variant="caption" sx={{ flex: 1, fontWeight: 600, color: 'text.secondary' }}>
-                  {t('chat.sessions', '会话')}
-                </Typography>
-                <Tooltip title="折叠侧栏">
-                  <IconButton size="small" onClick={() => setSidebarCollapsed(true)}>
-                    <PanelRightClose size={15} />
-                  </IconButton>
-                </Tooltip>
-              </Box>
-              {drawerContent}
-            </>
-          )}
+          <Box sx={{ display: 'flex', alignItems: 'center', px: 1, py: 0.5, borderBottom: 1, borderColor: 'divider' }}>
+            <Typography variant="caption" sx={{ flex: 1, fontWeight: 600, color: 'text.secondary' }}>
+              {t('chat.sessions', '会话')}
+            </Typography>
+          </Box>
+          {drawerContent}
         </Drawer>
       )}
 
