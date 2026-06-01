@@ -1284,6 +1284,9 @@ export function UserChatPage() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [messageQueue, setMessageQueue] = useState<Array<{ input: string; files: UploadedFile[] }>>([]);
+  const [compressing, setCompressing] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
@@ -1304,6 +1307,12 @@ export function UserChatPage() {
   const workspaceWidthRef = useRef(workspaceWidth);
   workspaceWidthRef.current = workspaceWidth;
   const workspaceResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const messageContainerRef = useRef<HTMLDivElement | null>(null);
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  const sessionsLoadingRef = useRef(sessionsLoading);
+  sessionsLoadingRef.current = sessionsLoading;
+  const userCancelledRef = useRef(false);
 
   // ==================== Workspace 拖拽缩放 ====================
   const handleWorkspaceResizeStart = useCallback((e: React.MouseEvent) => {
