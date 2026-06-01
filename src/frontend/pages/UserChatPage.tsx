@@ -1273,6 +1273,7 @@ export function UserChatPage() {
   const { models } = useServer();
   const { toggleMobileOpen } = useSidebar();
   const { sessions, currentSessionId, setCurrentSessionId, createNewSession, deleteSession, updateSession, setSessions, loadSessionFromServer, loadSessionsFromServer, sessionsLoading } = useChat();
+  const currentSession = useMemo(() => sessions.find(s => s.id === currentSessionId) || null, [sessions, currentSessionId]);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const { id: sessionIdFromUrl } = useParams<{ id?: string }>();
