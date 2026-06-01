@@ -1348,39 +1348,6 @@ export function UserChatPage() {
     }
   }, [sessions, currentSessionId, isUserNearBottom, scrollToBottom]);
 
-  // ==================== Workspace 拖拽缩放 ====================
-  const handleWorkspaceResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    workspaceResizeRef.current = { startX: e.clientX, startWidth: workspaceWidth };
-  }, [workspaceWidth]);
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!workspaceResizeRef.current) return;
-      const { startX, startWidth } = workspaceResizeRef.current;
-      const diff = startX - e.clientX;
-      const newWidth = Math.max(200, Math.min(800, startWidth + diff));
-      setWorkspaceWidth(newWidth);
-    };
-    const handleMouseUp = () => {
-      if (!workspaceResizeRef.current) return;
-      workspaceResizeRef.current = null;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      // 保存到 localStorage
-      setWorkspaceWidth((w) => {
-        localStorage.setItem('workspaceWidth', String(w));
-        return w;
-      });
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, []);
-
   // ==================== 会话管理 ====================
 
   const handleCreateNewSession = useCallback(async () => {
