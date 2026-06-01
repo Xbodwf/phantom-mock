@@ -1290,79 +1290,43 @@ export function UserChatPage() {
   const [snackbar, setSnackbar] = useState({ open: false, message: '' });
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
+  const [workspaceWidth, setWorkspaceWidth] = useState(() => {
+    const saved = localStorage.getItem('workspaceWidth');
+    return saved ? parseInt(saved, 10) : 400;
+  });
+  const workspaceWidthRef = useRef(workspaceWidth);
+  workspaceWidthRef.current = workspaceWidth;
+  const workspaceResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
-  // 队列和流式控制
-  const [messageQueue, setMessageQueue] = useState<Array<{ input: string; files: UploadedFile[] }>>([]);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  // ==================== Workspace 拖拽缩放 ====================
+  const handleWorkspaceResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    workspaceResizeRef.current = { startX: e.clientX, startWidth: workspaceWidthRef.current };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
 
-  // 上下文压缩
-  const [compressing, setCompressing] = useState(false);
-
-  // 编辑状态
-  const [editingTitle, setEditingTitle] = useState('');
-  const [editingSystemPrompt, setEditingSystemPrompt] = useState('');
-  const [editingModel, setEditingModel] = useState('');
-  const [editingApiType, setEditingApiType] = useState<ApiType>('openai-chat');
-  const [editingStream, setEditingStream] = useState(false);
-  const [editingTimeout, setEditingTimeout] = useState(DEFAULT_TIMEOUT);
-
-  // 快捷设置 Popover
-  const [modelAnchor, setModelAnchor] = useState<null | HTMLElement>(null);
-  const [optionsAnchor, setOptionsAnchor] = useState<null | HTMLElement>(null);
-
-  // 图片预览
-  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
-  const [previewImageUrl, setPreviewImageUrl] = useState('');
-
-  // 消息信息对话框
-  const [messageInfoOpen, setMessageInfoOpen] = useState(false);
-  const [messageInfo, setMessageInfo] = useState<ChatMessage | null>(null);
-
-  // 滚动控制
-  const [isUserNearBottom, setIsUserNearBottom] = useState(true);
-  const messageContainerRef = useRef<HTMLDivElement | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  // 流式更新的 ref
-  const streamContentRef = useRef<string>('');
-  const reasoningContentRef = useRef<string>('');
-  const streamFinishedRef = useRef<boolean>(false);
-  const userCancelledRef = useRef<boolean>(false);
-
-  // 追踪 sessions 状态，避免闭包中 sessions 过时
-  const sessionsRef = useRef(sessions);
-  sessionsRef.current = sessions;
-  const sessionsLoadingRef = useRef(sessionsLoading);
-  sessionsLoadingRef.current = sessionsLoading;
-  const streamUpdateTimeoutRef = useRef<number | null>(null);
-
-  // ==================== 计算属性 ====================
-
-  const currentSession = useMemo(() => {
-    return sessions.find((s) => s.id === currentSessionId) || null;
-  }, [sessions, currentSessionId]);
-
-  // 流结束后拉取最新 session（获取 DB 中更新的 fileTree）
   useEffect(() => {
-    if (!currentSessionId || loading) return;
-    let cancelled = false;
-    const check = async () => {
-      try {
-        const fresh = await loadSessionFromServer(currentSessionId!);
-        if (fresh && !cancelled) {
-          setSessions((prev) => prev.map((s) => s.id === fresh.id ? { ...s, ...fresh } : s));
-        }
-      } catch {}
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!workspaceResizeRef.current) return;
+      const { startX, startWidth } = workspaceResizeRef.current;
+      const diff = startX - e.clientX;
+      const newWidth = Math.max(200, Math.min(800, startWidth + diff));
+      setWorkspaceWidth(newWidth);
     };
-    const timer = setTimeout(check, 500);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [loading, currentSessionId, loadSessionFromServer, setSessions]);
-
-  // ==================== 滚动控制 ====================
-
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    messagesEndRef.current?.scrollIntoView({ behavior });
+    const handleMouseUp = () => {
+      if (!workspaceResizeRef.current) return;
+      workspaceResizeRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      localStorage.setItem('workspaceWidth', String(workspaceWidthRef.current));
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
   }, []);
 
   useEffect(() => {
@@ -1383,6 +1347,39 @@ export function UserChatPage() {
       scrollToBottom();
     }
   }, [sessions, currentSessionId, isUserNearBottom, scrollToBottom]);
+
+  // ==================== Workspace 拖拽缩放 ====================
+  const handleWorkspaceResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    workspaceResizeRef.current = { startX: e.clientX, startWidth: workspaceWidth };
+  }, [workspaceWidth]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!workspaceResizeRef.current) return;
+      const { startX, startWidth } = workspaceResizeRef.current;
+      const diff = startX - e.clientX;
+      const newWidth = Math.max(200, Math.min(800, startWidth + diff));
+      setWorkspaceWidth(newWidth);
+    };
+    const handleMouseUp = () => {
+      if (!workspaceResizeRef.current) return;
+      workspaceResizeRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      // 保存到 localStorage
+      setWorkspaceWidth((w) => {
+        localStorage.setItem('workspaceWidth', String(w));
+        return w;
+      });
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
 
   // ==================== 会话管理 ====================
 
@@ -3520,16 +3517,27 @@ export function UserChatPage() {
 
       {/* 工作空间面板 (有文件树时显示) */}
       {currentSession?.fileTree && currentSession.fileTree.length > 0 && !isMobile && (
-        <Box sx={{
-          width: 400,
-          flexShrink: 0,
-          borderLeft: 1,
-          borderColor: 'divider',
-          display: 'flex',
-          flexDirection: 'column',
-          bgcolor: 'background.paper',
-        }}>
-          <WorkspacePanel
+        <Box sx={{ display: 'flex', flexShrink: 0 }}>
+          {/* 拖拽调整手柄 */}
+          <Box
+            onMouseDown={handleWorkspaceResizeStart}
+            sx={{
+              width: 4,
+              cursor: 'col-resize',
+              bgcolor: 'divider',
+              transition: 'background-color 0.15s',
+              '&:hover': { bgcolor: 'primary.main' },
+              flexShrink: 0,
+            }}
+          />
+          <Box sx={{
+            width: workspaceWidth,
+            flexShrink: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            bgcolor: 'background.paper',
+          }}>
+            <WorkspacePanel
             fileTree={currentSession.fileTree}
             sessionId={currentSession.id}
             onFileTreeChange={(newTree) => {

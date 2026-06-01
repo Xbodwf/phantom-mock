@@ -111,13 +111,36 @@ export function WorkspacePanel({ fileTree, sessionId, onFileTreeChange }: Worksp
 
   const getLanguage = (filename: string): string => {
     const ext = filename.split('.').pop()?.toLowerCase();
+    // Also check for compound extensions like .test.js, .spec.ts
+    const parts = filename.split('.');
+    const compound = parts.length > 2 ? parts.slice(-2).join('.') : '';
+    const ext2 = parts.length > 2 ? parts[parts.length - 2] + '.' + parts[parts.length - 1] : '';
     const map: Record<string, string> = {
-      js: 'javascript', ts: 'typescript', tsx: 'typescript', jsx: 'javascript',
-      py: 'python', go: 'go', rs: 'rust', java: 'java', c: 'c', cpp: 'cpp',
-      css: 'css', scss: 'scss', html: 'html', json: 'json', yml: 'yaml',
-      yaml: 'yaml', md: 'markdown', xml: 'xml', sql: 'sql', sh: 'shell',
-      bash: 'shell', dockerfile: 'dockerfile', gitignore: 'plaintext',
+      js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+      ts: 'typescript', mts: 'typescript', cts: 'typescript',
+      tsx: 'typescriptreact', jsx: 'javascriptreact',
+      py: 'python', py3: 'python', pyx: 'python',
+      go: 'go', rs: 'rust', rb: 'ruby',
+      java: 'java', kt: 'kotlin', scala: 'scala', clj: 'clojure',
+      c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp', cs: 'csharp',
+      css: 'css', scss: 'scss', less: 'less', sass: 'sass',
+      html: 'html', htm: 'html', xhtml: 'html',
+      vue: 'html', svelte: 'html',
+      json: 'json', jsonc: 'json', yaml: 'yaml', yml: 'yaml',
+      xml: 'xml', svg: 'xml', plist: 'xml',
+      md: 'markdown', mdx: 'markdown', markdown: 'markdown',
+      sql: 'sql', sh: 'shell', bash: 'shell', zsh: 'shell',
+      dockerfile: 'dockerfile', makefile: 'makefile',
+      gitignore: 'plaintext', env: 'plaintext', editorconfig: 'plaintext',
+      php: 'php', swift: 'swift', dart: 'dart', lua: 'lua',
+      r: 'r', pl: 'perl', pm: 'perl', pas: 'pascal',
+      tex: 'latex', bib: 'latex', rst: 'rst',
+      diff: 'diff', patch: 'diff',
+      ini: 'ini', cfg: 'ini', conf: 'ini',
+      toml: 'plaintext', lock: 'plaintext',
     };
+    // Check compound extension first (e.g., .dockerfile, .test.js)
+    if (compound && map[compound]) return map[compound];
     return map[ext || ''] || 'plaintext';
   };
 
