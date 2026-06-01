@@ -1290,6 +1290,12 @@ export function UserChatPage() {
   const [snackbar, setSnackbar] = useState({ open: false, message: '' });
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
+  const [editingTitle, setEditingTitle] = useState('');
+  const [editingSystemPrompt, setEditingSystemPrompt] = useState('');
+  const [editingModel, setEditingModel] = useState('');
+  const [editingApiType, setEditingApiType] = useState<ApiType>('openai-chat');
+  const [editingStream, setEditingStream] = useState(false);
+  const [editingTimeout, setEditingTimeout] = useState(DEFAULT_TIMEOUT);
   const [workspaceWidth, setWorkspaceWidth] = useState(() => {
     const saved = localStorage.getItem('workspaceWidth');
     return saved ? parseInt(saved, 10) : 400;
