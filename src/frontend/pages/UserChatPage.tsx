@@ -113,6 +113,7 @@ type ToolCall = {
   name: string;
   arguments: string;
   result?: string;
+  status?: 'executing' | 'completed';
   _idx?: number;
 };
 
@@ -798,48 +799,99 @@ function formatToolArgs(tool: ToolCall): string {
 }
 
 const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockProps) {
+  const [resultsOpen, setResultsOpen] = useState<Record<string, boolean>>({});
+  const theme = useTheme();
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 1.5 }}>
       {toolCalls.map((tool, index) => (
-        <Box
-          key={tool.id || index}
-          sx={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 1,
-            px: 1.5,
-            py: 0.7,
-            bgcolor: 'action.hover',
-            borderRadius: '8px',
-            alignSelf: 'flex-start',
-            maxWidth: '100%',
-          }}
-        >
-          <Wrench size={13} />
-          <Typography
-            variant="caption"
+        <Box key={tool.id || index}>
+          <Box
             sx={{
-              fontWeight: 600,
-              color: 'text.secondary',
-              whiteSpace: 'nowrap',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 1,
+              px: 1.5,
+              py: 0.7,
+              bgcolor: tool.status === 'executing'
+                ? (theme.palette.mode === 'dark' ? 'rgba(59,130,246,0.12)' : 'rgba(59,130,246,0.08)')
+                : tool.status === 'completed'
+                ? (theme.palette.mode === 'dark' ? 'rgba(34,197,94,0.12)' : 'rgba(34,197,94,0.08)')
+                : 'action.hover',
+              borderRadius: '8px',
+              alignSelf: 'flex-start',
+              maxWidth: '100%',
+              cursor: tool.result ? 'pointer' : 'default',
+            }}
+            onClick={() => {
+              if (tool.result) {
+                setResultsOpen((prev) => ({ ...prev, [tool.id || index]: !prev[tool.id || index] }));
+              }
             }}
           >
-            {TOOL_FRIENDLY_NAMES[tool.name] || tool.name}:
-          </Typography>
-          <Typography
-            variant="caption"
-            component="span"
-            sx={{
-              fontFamily: 'monospace',
-              fontSize: '0.75rem',
-              color: 'text.primary',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {formatToolArgs(tool)}
-          </Typography>
+            {tool.status === 'executing' ? (
+              <CircularProgress size={13} />
+            ) : tool.status === 'completed' ? (
+              <Check size={13} style={{ color: '#22c55e' }} />
+            ) : (
+              <Wrench size={13} />
+            )}
+            <Typography
+              variant="caption"
+              sx={{
+                fontWeight: 600,
+                color: 'text.secondary',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {TOOL_FRIENDLY_NAMES[tool.name] || tool.name}:
+            </Typography>
+            <Typography
+              variant="caption"
+              component="span"
+              sx={{
+                fontFamily: 'monospace',
+                fontSize: '0.75rem',
+                color: 'text.primary',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {formatToolArgs(tool)}
+            </Typography>
+          </Box>
+          {/* Result expandable section */}
+          {tool.result && resultsOpen[tool.id || index] && (
+            <Box
+              sx={{
+                ml: 2,
+                mt: 0.5,
+                p: 1.5,
+                borderRadius: '8px',
+                bgcolor: theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.03)',
+                border: 1,
+                borderColor: 'divider',
+                maxHeight: 200,
+                overflow: 'auto',
+              }}
+            >
+              <Typography
+                variant="caption"
+                component="pre"
+                sx={{
+                  fontFamily: 'monospace',
+                  fontSize: '0.75rem',
+                  lineHeight: 1.5,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  m: 0,
+                }}
+              >
+                {tool.result.length > 500 ? tool.result.slice(0, 500) + '...' : tool.result}
+              </Typography>
+            </Box>
+          )}
         </Box>
       ))}
     </Box>
@@ -2109,6 +2161,9 @@ export function UserChatPage() {
                 if (messages[lastIndex]) {
                   const msg: any = { ...messages[lastIndex] };
                   msg.content = streamContentRef.current;
+                  if (toolCalls.length > 0) {
+                    msg.toolCalls = [...toolCalls];
+                  }
                   if (reasoningContentRef.current) {
                     msg.reasoning_content = reasoningContentRef.current;
                   }
@@ -2194,6 +2249,28 @@ export function UserChatPage() {
                         });
                       }
                     }
+                  }
+
+                  // 处理工具执行进度（由服务端在工具执行期间发送）
+                  if ((delta as any)?.tool_progress) {
+                    const tp = (delta as any).tool_progress;
+                    const existing = toolCalls.find((t) => t.id === tp.tool_call_id);
+                    if (existing) {
+                      existing.status = tp.status;
+                      if (tp.status === 'completed' && tp.result !== undefined) {
+                        existing.result = tp.result;
+                      }
+                    } else {
+                      toolCalls.push({
+                        id: tp.tool_call_id,
+                        name: tp.name || '',
+                        arguments: '',
+                        status: tp.status,
+                        result: tp.status === 'completed' ? tp.result : undefined,
+                        _idx: toolCalls.length,
+                      });
+                    }
+                    throttledUpdate();
                   }
                 } catch {
                   // Ignore parse errors

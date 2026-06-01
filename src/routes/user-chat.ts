@@ -155,6 +155,38 @@ router.post('/', async (req: AuthRequest, res: Response) => {
   }
 });
 
+function buildToolProgressChunk(
+  requestId: string,
+  model: string,
+  toolCallId: string,
+  name: string,
+  status: 'executing' | 'completed',
+  result?: string,
+): string {
+  const delta: any = {
+    tool_progress: {
+      tool_call_id: toolCallId,
+      name,
+      status,
+    },
+  };
+  if (result !== undefined) {
+    delta.tool_progress.result = result;
+  }
+  const choices = [{
+    index: 0,
+    delta,
+    finish_reason: null,
+  }];
+  return `data: ${JSON.stringify({
+    id: requestId,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices,
+  })}\n\n`;
+}
+
 /**
  * 流式转发 + 内置工具拦截
  * 1. 透传 text delta 给客户端
@@ -398,8 +430,20 @@ async function streamWithBuiltinTools(
 
     console.log('[streamWithBuiltinTools] Executing builtin tools:', toolCalls.map(tc => tc.name).join(','));
 
+    // Send "executing" progress for each tool
+    for (const tc of toolCalls) {
+      res.write(buildToolProgressChunk(requestId, body.model, tc.id, tc.name, 'executing'));
+    }
+
+    // Execute tools in parallel, send individual "completed" as each resolves
     const toolResults = await Promise.all(
-      toolCalls.map(tc => executeBuiltinTool({ name: tc.name, arguments: tc.args, tool_call_id: tc.id }))
+      toolCalls.map(tc =>
+        executeBuiltinTool({ name: tc.name, arguments: tc.args, tool_call_id: tc.id }, sessionId)
+          .then(result => {
+            res.write(buildToolProgressChunk(requestId, body.model, tc.id, tc.name, 'completed', result.content));
+            return result;
+          })
+      )
     );
 
     // 检测 AI 是否连续多轮只调工具不输出文本
@@ -852,6 +896,8 @@ async function handleUserChatRequest(
       },
     };
   }
+  // Strip thinking from body — upstream proxies expect an object, not a boolean
+  delete body.thinking;
 
   const hasForwarding = isModelForwardingConfigured(runtimeModel);
 
@@ -916,7 +962,7 @@ async function handleUserChatRequest(
       if (useToolLoop) {
         console.log('[User Chat] Starting streamWithBuiltinTools');
         try {
-          const allContent = await streamWithBuiltinTools(runtimeModel, body, res, requestId);
+          const allContent = await streamWithBuiltinTools(runtimeModel, body, res, requestId, sessionId);
           streamingContent = allContent;
         } catch (error: any) {
           console.error('[User Chat] Stream with tools failed:', error.message);

@@ -123,81 +123,102 @@ async function initializeApp() {
     app.use('/api/payment', paymentRouter);
     app.use('/api/admin', authMiddleware, adminMiddleware, createAdminPaymentRoutes(redeemCodeManager));
 
-    // ==================== SSR 支持 ====================
-// 只要存在SSR构建产物就启用服务端渲染
+    // ==================== SSR 支持（懒加载） ====================
+// SSR 构建产物存在时启用服务端渲染，但不在启动时阻塞
 const serverEntryPath = join(process.cwd(), 'dist/server/server.js');
-const ssrEnabled = existsSync(serverEntryPath);
+const clientDistPath = join(process.cwd(), 'dist/client');
+const ssrEnabled = existsSync(serverEntryPath) && existsSync(clientDistPath);
 
-if (ssrEnabled) {
-  console.log('[Server] SSR enabled, loading server entry...');
-  
+// 懒加载状态
+let ssrRender: ((args: { url: string; context: any }) => string) | null = null;
+let ssrTemplate: string | null = null;
+let ssrRenderTemplate: ((html: string, initialState?: any) => string) | null = null;
+let ssrLoading = false;
+let ssrReady = false;
+
+async function loadSsrModule() {
+  if (ssrReady || ssrLoading) return;
+  ssrLoading = true;
+  console.log('[Server] Lazy-loading SSR module...');
   try {
-    // 动态导入SSR模块
-    const { render } = await import(serverEntryPath);
-    const { loadTemplate, renderTemplate } = await import('./server-ssr.js');
-    const template = loadTemplate();
-
-    // SSR中间件
-    app.use(async (req: Request, res: Response, next: NextFunction) => {
-      // 跳过API请求和静态资源
-      if (req.path.startsWith('/api/') || 
-          req.path.startsWith('/v1/') || 
-          req.path.startsWith('/v1beta/') ||
-          req.path.startsWith('/static/') ||
-          req.path.includes('.')) {
-        return next();
-      }
-
-      try {
-        const context: { url?: string; title?: string } = {};
-        const initialState: any = {};
-
-        // 预加载聊天会话数据
-        const sessionMatch = req.path.match(/\/chat\/session\/([^\/]+)/);
-        if (sessionMatch) {
-          const sessionId = sessionMatch[1];
-          try {
-            const { getChatSessionById } = await import('./db/chatSessions.js');
-            const session = await getChatSessionById(sessionId);
-            if (session) {
-              initialState.session = session;
-              // 设置页面标题
-              if (session.title) {
-                context.title = `${session.title} - Phantom Mock`;
-              }
-            }
-          } catch (error) {
-            console.error('[SSR] Failed to preload session:', error);
-          }
-        }
-
-        const appHtml = render({ url: req.path, context });
-        
-        // 检查是否有重定向
-        if (context.url) {
-          return res.redirect(context.url);
-        }
-
-        // 渲染完整HTML
-        let html = renderTemplate(template, initialState).replace('<!--app-html-->', appHtml);
-        
-        // 如果有自定义标题，替换它
-        if (context.title) {
-          html = html.replace(/<title>.*?<\/title>/, `<title>${context.title}</title>`);
-        }
-
-        res.send(html);
-      } catch (error) {
-        console.error('[SSR] Error rendering:', error);
-        // 出错时回退到静态文件
-        next();
-      }
-    });
-
-    console.log('[Server] SSR middleware loaded');
+    const mod = await import(serverEntryPath);
+    ssrRender = mod.render;
+    const ssrUtils = await import('./server-ssr.js');
+    ssrTemplate = ssrUtils.loadTemplate();
+    ssrRenderTemplate = ssrUtils.renderTemplate;
+    ssrReady = true;
+    console.log('[Server] SSR module loaded');
   } catch (error) {
     console.error('[Server] Failed to load SSR:', error);
+  } finally {
+    ssrLoading = false;
   }
+}
+
+// SSR中间件（懒加载：首次请求时载入，不阻塞服务器启动）
+if (ssrEnabled) {
+  app.use(async (req: Request, res: Response, next: NextFunction) => {
+    // 跳过API请求和静态资源
+    if (req.path.startsWith('/api/') || 
+        req.path.startsWith('/v1/') || 
+        req.path.startsWith('/v1beta/') ||
+        req.path.startsWith('/static/') ||
+        req.path.includes('.')) {
+      return next();
+    }
+
+    // 首次请求触发懒加载
+    if (!ssrReady && !ssrLoading) {
+      loadSsrModule().catch(() => {});
+    }
+
+    // SSR 尚未就绪，回退到静态文件
+    if (!ssrReady || !ssrRender || !ssrTemplate) {
+      return next();
+    }
+
+    try {
+      const context: { url?: string; title?: string } = {};
+      const initialState: any = {};
+
+      // 预加载聊天会话数据
+      const sessionMatch = req.path.match(/\/chat\/session\/([^\/]+)/);
+      if (sessionMatch) {
+        const sessionId = sessionMatch[1];
+        try {
+          const { getChatSessionById } = await import('./db/chatSessions.js');
+          const session = await getChatSessionById(sessionId);
+          if (session) {
+            initialState.session = session;
+            if (session.title) {
+              context.title = `${session.title} - Phantom Mock`;
+            }
+          }
+        } catch (error) {
+          console.error('[SSR] Failed to preload session:', error);
+        }
+      }
+
+      const appHtml = ssrRender({ url: req.path, context });
+      
+      if (context.url) {
+        return res.redirect(context.url);
+      }
+
+      let html = ssrRenderTemplate(ssrTemplate, initialState).replace('<!--app-html-->', appHtml);
+      
+      if (context.title) {
+        html = html.replace(/<title>.*?<\/title>/, `<title>${context.title}</title>`);
+      }
+
+      res.send(html);
+    } catch (error) {
+      console.error('[SSR] Error rendering:', error);
+      next();
+    }
+  });
+
+  console.log('[Server] SSR enabled (lazy-loaded on first request)');
 }
 
 // SPA fallback - 在所有路由挂载后再挂载
