@@ -53,6 +53,7 @@ import {
   RotateCcw,
   Check,
   ChevronDown,
+  ChevronUp,
   Sparkles,
   Brain,
   Wrench,
