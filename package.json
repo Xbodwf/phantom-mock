@@ -9,7 +9,7 @@
     "dev:all": "concurrently \"pnpm dev\" \"pnpm dev:frontend\"",
     "build": "vite build",
     "build:frontend": "vite build",
-    "build:backend": "tsc -p tsconfig.backend.json",
+    "build:backend": "tsc -p tsconfig.backend.json && cp -r src/tools/bash-wasm/*.wasm src/tools/bash-wasm/*.module.js dist/tools/bash-wasm/ 2>/dev/null; true",
     "build:backend:fast": "swc src -d dist --config-file .swcrc",
     "build:backend:oxc": "tsx scripts/build-oxc.ts",
     "build:all": "concurrently \"pnpm build:backend\" \"pnpm build:frontend\"",
