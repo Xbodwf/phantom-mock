@@ -77,6 +77,7 @@ import { useChat } from '../contexts/ChatContext';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigate } from 'react-router-dom';
 import { copyToClipboard } from '../utils/clipboard';
+import { WorkspacePanel } from '../components/WorkspacePanel';
 
 // ==================== 类型定义 ====================
 
