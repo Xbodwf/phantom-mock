@@ -1,5 +1,6 @@
 import { parse } from 'node-html-parser';
 import { getChatSessionById, updateChatSession, FileNode } from '../db/chatSessions.js';
+import { executeBashWasm } from './bash-wasm.js';
 
 export const BUILTIN_TOOL_NAMES = new Set(['web_fetch', 'web_search', 'terminal', 'file_read', 'file_write', 'file_list']);
 
@@ -205,91 +206,16 @@ async function executeTerminal(args: { command: string }, sessionId?: string): P
   if (!sessionId) return 'Error: No active session';
   const session = await getChatSessionById(sessionId);
   if (!session) return 'Error: Session not found';
-  const fileTree = session.fileTree || [];
 
-  const parts = args.command.trim().split(/\s+/);
-  const cmd = parts[0];
-
-  switch (cmd) {
-    case 'ls': {
-      const flag = parts[1] || '';
-      const showAll = flag.includes('a') || flag.includes('l') && flag.includes('a');
-      const dirs = listNodes(fileTree, showAll);
-      return dirs.join('\n') || '(empty)';
-    }
-    case 'cat': {
-      const filePath = parts[1];
-      if (!filePath) return 'cat: missing operand';
-      const node = findNode(fileTree, filePath.split('/').filter(Boolean));
-      if (!node) return `cat: ${filePath}: No such file or directory`;
-      if (node.type === 'directory') return `cat: ${filePath}: Is a directory`;
-      return node.content || '';
-    }
-    case 'node': {
-      const filePath = parts[1];
-      if (!filePath) return 'node: missing file argument';
-      return `[WebContainer] Node.js 执行 ${filePath} 完成 (模拟)`;
-    }
-    case 'npm': {
-      const sub = parts[1];
-      if (sub === 'install') return '[WebContainer] npm install 完成';
-      if (sub === 'run') {
-        const script = parts.slice(2).join(' ');
-        return `[WebContainer] npm run ${script} 执行完成`;
-      }
-      if (sub === 'test') return '[WebContainer] npm test 通过';
-      return `[WebContainer] npm ${sub} 完成`;
-    }
-    case 'mkdir': {
-      const dirPath = parts[1];
-      if (!dirPath) return 'mkdir: missing operand';
-      const parts2 = dirPath.split('/').filter(Boolean);
-      const name = parts2.pop()!;
-      let current = fileTree;
-      for (const part of parts2) {
-        let dir = current.find(n => n.name === part && n.type === 'directory');
-        if (!dir) {
-          dir = { name: part, type: 'directory', children: [] };
-          current.push(dir);
-        }
-        if (!dir.children) dir.children = [];
-        current = dir.children;
-      }
-      if (!current.find(n => n.name === name)) {
-        current.push({ name, type: 'directory', children: [] });
-      }
-      await updateChatSession(sessionId, { fileTree } as any);
-      return `mkdir: ${dirPath} 已创建`;
-    }
-    case 'touch': {
-      const filePath = parts[1];
-      if (!filePath) return 'touch: missing operand';
-      const parts2 = filePath.split('/').filter(Boolean);
-      const name = parts2.pop()!;
-      let current = fileTree;
-      for (const part of parts2) {
-        let dir = current.find(n => n.name === part && n.type === 'directory');
-        if (!dir) {
-          dir = { name: part, type: 'directory', children: [] };
-          current.push(dir);
-        }
-        if (!dir.children) dir.children = [];
-        current = dir.children;
-      }
-      if (!current.find(n => n.name === name)) {
-        current.push({ name, type: 'file', content: '' });
-        await updateChatSession(sessionId, { fileTree } as any);
-      }
-      return '';
-    }
-    case 'pwd':
-      return '/home/project';
-    case 'echo':
-      return parts.slice(1).join(' ');
-    case 'clear':
-      return '';
-    default:
-      return `bash: ${cmd}: command not found`;
+  const userId = session.ownerId || 'anonymous';
+  try {
+    const result = await executeBashWasm(args.command, userId, sessionId);
+    let output = '';
+    if (result.stdout) output += result.stdout + '\n';
+    if (result.stderr) output += result.stderr + '\n';
+    return output.trim() || '(no output)';
+  } catch (e: any) {
+    return `Error executing command: ${e.message}`;
   }
 }
 
