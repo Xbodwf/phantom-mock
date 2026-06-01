@@ -5,7 +5,10 @@ import type { NodeTokenPayload } from './types.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-in-production';
-const TOKEN_ENCRYPTION_KEY = (process.env.TOKEN_ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex')).slice(0, 32);
+// 加密密钥：优先用环境变量，否则从 JWT_SECRET 派生（保证重启后稳定）
+const TOKEN_ENCRYPTION_KEY = process.env.TOKEN_ENCRYPTION_KEY
+  ? process.env.TOKEN_ENCRYPTION_KEY.slice(0, 32)
+  : crypto.createHash('sha256').update(JWT_SECRET).digest('hex').slice(0, 32);
 
 function encryptToken(plain: string): string {
   const iv = crypto.randomBytes(16);

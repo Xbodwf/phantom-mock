@@ -2152,6 +2152,7 @@ export function UserChatPage() {
       if (session.stream) {
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
+        let toolCalls: ToolCall[] = [];
 
         const updateContent = () => {
           setSessions((prev) =>
@@ -2188,7 +2189,7 @@ export function UserChatPage() {
 
         if (reader) {
           let buffer = '';
-          let toolCalls: ToolCall[] = [];
+
 
           while (true) {
             const { done, value } = await reader.read();
