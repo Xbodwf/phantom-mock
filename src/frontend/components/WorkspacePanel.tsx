@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Box, Divider, IconButton, Typography, Tooltip, Drawer, useMediaQuery, useTheme } from '@mui/material';
-import { PanelLeftClose, PanelLeft, Terminal, Code } from 'lucide-react';
+import { PanelLeftClose, PanelLeft, Terminal, Code, Download } from 'lucide-react';
 import { FileExplorer } from './FileExplorer';
 import { CodeEditor } from './CodeEditor';
 import type { FileNode } from '../contexts/ChatContext';
@@ -146,6 +146,24 @@ export function WorkspacePanel({ fileTree, sessionId, onFileTreeChange }: Worksp
         <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', flex: 1 }}>
           {selectedPath || 'Workspace'}
         </Typography>
+        {selectedNode && selectedNode.type === 'file' && (
+          <Tooltip title="Download file">
+            <IconButton
+              size="small"
+              onClick={() => {
+                const blob = new Blob([selectedNode.content || ''], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = selectedPath?.split('/').pop() || 'file';
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              <Download size={14} />
+            </IconButton>
+          </Tooltip>
+        )}
         <IconButton size="small" onClick={handleRefresh} disabled={loading}>
           <Terminal size={14} />
         </IconButton>

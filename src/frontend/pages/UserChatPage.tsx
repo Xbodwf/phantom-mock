@@ -64,6 +64,8 @@ import {
   Globe2,
   Lock,
   Info,
+  PanelRightClose,
+  PanelRight,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import hljs from 'highlight.js';
@@ -779,82 +781,71 @@ const TOOL_FRIENDLY_NAMES: Record<string, string> = {
 };
 
 function formatToolArgs(tool: ToolCall): string {
-  if (tool.name === 'terminal') {
-    try {
-      const args = JSON.parse(tool.arguments);
-      return args.command || '';
-    } catch { return tool.arguments; }
+  try {
+    const args = JSON.parse(tool.arguments);
+    if (tool.name === 'terminal') return args.command || '';
+    if (tool.name === 'web_search') return args.query || '';
+    if (tool.name === 'web_fetch') return args.url || '';
+    if (tool.name === 'file_read') return args.path || '';
+    if (tool.name === 'file_write') return args.path || '';
+    if (tool.name === 'file_list') return args.path || '/';
+    return tool.arguments;
+  } catch {
+    return tool.arguments;
   }
-  if (tool.name === 'web_search') {
-    try {
-      const args = JSON.parse(tool.arguments);
-      return args.query || '';
-    } catch { return tool.arguments; }
-  }
-  if (tool.name === 'web_fetch') {
-    try {
-      const args = JSON.parse(tool.arguments);
-      return args.url || '';
-    } catch { return tool.arguments; }
-  }
-  return tool.arguments;
 }
 
 const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockProps) {
-  const [resultsOpen, setResultsOpen] = useState<Record<string, boolean>>({});
   const theme = useTheme();
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 1.5 }}>
+    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
       {toolCalls.map((tool, index) => (
-        <Box key={tool.id || index}>
-          <Box
+        <Box
+          key={tool.id || index}
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 0.5,
+            px: 1,
+            py: 0.3,
+            borderRadius: '4px',
+            bgcolor: tool.status === 'executing'
+              ? (theme.palette.mode === 'dark' ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.1)')
+              : tool.status === 'completed'
+              ? (theme.palette.mode === 'dark' ? 'rgba(34,197,94,0.12)' : 'rgba(34,197,94,0.08)')
+              : 'action.hover',
+            opacity: tool.status === 'executing' ? 0.85 : 0.7,
+            transition: 'opacity 0.2s',
+          }}
+        >
+          {tool.status === 'executing' ? (
+            <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: '#3b82f6', animation: 'streaming-dot 1.4s ease-in-out infinite' }} />
+          ) : tool.status === 'completed' ? (
+            <Check size={10} style={{ color: '#22c55e' }} />
+          ) : (
+            <Wrench size={10} />
+          )}
+          <Typography
+            variant="caption"
             sx={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 1,
-              px: 1.5,
-              py: 0.7,
-              bgcolor: tool.status === 'executing'
-                ? (theme.palette.mode === 'dark' ? 'rgba(59,130,246,0.12)' : 'rgba(59,130,246,0.08)')
-                : tool.status === 'completed'
-                ? (theme.palette.mode === 'dark' ? 'rgba(34,197,94,0.12)' : 'rgba(34,197,94,0.08)')
-                : 'action.hover',
-              borderRadius: '8px',
-              alignSelf: 'flex-start',
-              maxWidth: '100%',
-              cursor: tool.result ? 'pointer' : 'default',
-            }}
-            onClick={() => {
-              if (tool.result) {
-                setResultsOpen((prev) => ({ ...prev, [tool.id || index]: !prev[tool.id || index] }));
-              }
+              fontWeight: 500,
+              color: 'text.secondary',
+              fontSize: '0.7rem',
+              lineHeight: 1.2,
             }}
           >
-            {tool.status === 'executing' ? (
-              <CircularProgress size={13} />
-            ) : tool.status === 'completed' ? (
-              <Check size={13} style={{ color: '#22c55e' }} />
-            ) : (
-              <Wrench size={13} />
-            )}
-            <Typography
-              variant="caption"
-              sx={{
-                fontWeight: 600,
-                color: 'text.secondary',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {TOOL_FRIENDLY_NAMES[tool.name] || tool.name}:
-            </Typography>
+            {TOOL_FRIENDLY_NAMES[tool.name] || tool.name}
+          </Typography>
+          {formatToolArgs(tool) && (
             <Typography
               variant="caption"
               component="span"
               sx={{
                 fontFamily: 'monospace',
-                fontSize: '0.75rem',
-                color: 'text.primary',
+                fontSize: '0.65rem',
+                color: 'text.disabled',
+                maxWidth: 120,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
@@ -862,37 +853,6 @@ const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockPr
             >
               {formatToolArgs(tool)}
             </Typography>
-          </Box>
-          {/* Result expandable section */}
-          {tool.result && resultsOpen[tool.id || index] && (
-            <Box
-              sx={{
-                ml: 2,
-                mt: 0.5,
-                p: 1.5,
-                borderRadius: '8px',
-                bgcolor: theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.03)',
-                border: 1,
-                borderColor: 'divider',
-                maxHeight: 200,
-                overflow: 'auto',
-              }}
-            >
-              <Typography
-                variant="caption"
-                component="pre"
-                sx={{
-                  fontFamily: 'monospace',
-                  fontSize: '0.75rem',
-                  lineHeight: 1.5,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  m: 0,
-                }}
-              >
-                {tool.result.length > 500 ? tool.result.slice(0, 500) + '...' : tool.result}
-              </Typography>
-            </Box>
           )}
         </Box>
       ))}
@@ -1329,6 +1289,7 @@ export function UserChatPage() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '' });
   const [isReadOnly, setIsReadOnly] = useState(false);
+  const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
 
   // 队列和流式控制
   const [messageQueue, setMessageQueue] = useState<Array<{ input: string; files: UploadedFile[] }>>([]);
@@ -3584,32 +3545,61 @@ export function UserChatPage() {
         </Box>
       )}
 
-      {/* 桌面端侧边栏 */}
+      {/* 桌面端侧边栏 - 默认折叠 */}
       {!isMobile && (
-        <Drawer
-          variant="permanent"
-          anchor="right"
-          sx={{
-            width: DRAWER_WIDTH,
-            flexShrink: 0,
-            '& .MuiDrawer-paper': {
-              width: DRAWER_WIDTH,
-              boxSizing: 'border-box',
-              borderLeft: 1,
-              borderColor: 'divider',
-              borderRight: 'none',
-              position: 'relative',
-              overflow: 'hidden',
-            },
-          }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', px: 1, py: 0.5, borderBottom: 1, borderColor: 'divider' }}>
-            <Typography variant="caption" sx={{ flex: 1, fontWeight: 600, color: 'text.secondary' }}>
-              {t('chat.sessions', '会话')}
-            </Typography>
-          </Box>
-          {drawerContent}
-        </Drawer>
+        <Box sx={{ display: 'flex', flexShrink: 0 }}>
+          {/* 折叠时的切换条 */}
+          {!sessionDrawerOpen && (
+            <Box
+              onClick={() => setSessionDrawerOpen(true)}
+              sx={{
+                width: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                borderLeft: 1,
+                borderColor: 'divider',
+                bgcolor: 'action.hover',
+                '&:hover': { bgcolor: 'action.selected' },
+                transition: 'background-color 0.15s',
+              }}
+            >
+              <PanelRight size={14} style={{ color: 'text.disabled' }} />
+            </Box>
+          )}
+          {sessionDrawerOpen && (
+            <Box sx={{ display: 'flex' }}>
+              <Box
+                onClick={() => setSessionDrawerOpen(false)}
+                sx={{
+                  width: 20,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  borderLeft: 1,
+                  borderColor: 'divider',
+                  bgcolor: 'action.hover',
+                  '&:hover': { bgcolor: 'action.selected' },
+                  transition: 'background-color 0.15s',
+                }}
+              >
+                <PanelRightClose size={14} style={{ color: 'text.disabled' }} />
+              </Box>
+              <Box sx={{ width: DRAWER_WIDTH, display: 'flex', flexDirection: 'column', borderLeft: 1, borderColor: 'divider' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', px: 1.5, py: 0.5, borderBottom: 1, borderColor: 'divider' }}>
+                  <Typography variant="caption" sx={{ flex: 1, fontWeight: 600, color: 'text.secondary' }}>
+                    {t('chat.sessions', '会话')}
+                  </Typography>
+                </Box>
+                <Box sx={{ flex: 1, overflow: 'auto' }}>
+                  {drawerContent}
+                </Box>
+              </Box>
+            </Box>
+          )}
+        </Box>
       )}
 
       {/* 移动端抽屉 */}
