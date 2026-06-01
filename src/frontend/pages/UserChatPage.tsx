@@ -1329,6 +1329,13 @@ export function UserChatPage() {
     };
   }, []);
 
+  const [isUserNearBottom, setIsUserNearBottom] = useState(true);
+  const scrollToBottom = useCallback((behavior?: ScrollBehavior) => {
+    const container = messageContainerRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: behavior || 'auto' });
+  }, []);
+
   useEffect(() => {
     const container = messageContainerRef.current;
     if (!container) return;
