@@ -1284,9 +1284,6 @@ export function UserChatPage() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
-  const [messageQueue, setMessageQueue] = useState<Array<{ input: string; files: UploadedFile[] }>>([]);
-  const [compressing, setCompressing] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
@@ -1294,12 +1291,33 @@ export function UserChatPage() {
   const [snackbar, setSnackbar] = useState({ open: false, message: '' });
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
+  const [messageQueue, setMessageQueue] = useState<Array<{ input: string; files: UploadedFile[] }>>([]);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [compressing, setCompressing] = useState(false);
   const [editingTitle, setEditingTitle] = useState('');
   const [editingSystemPrompt, setEditingSystemPrompt] = useState('');
   const [editingModel, setEditingModel] = useState('');
   const [editingApiType, setEditingApiType] = useState<ApiType>('openai-chat');
   const [editingStream, setEditingStream] = useState(false);
   const [editingTimeout, setEditingTimeout] = useState(DEFAULT_TIMEOUT);
+  const [modelAnchor, setModelAnchor] = useState<null | HTMLElement>(null);
+  const [optionsAnchor, setOptionsAnchor] = useState<null | HTMLElement>(null);
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
+  const [previewImageUrl, setPreviewImageUrl] = useState('');
+  const [messageInfoOpen, setMessageInfoOpen] = useState(false);
+  const [messageInfo, setMessageInfo] = useState<ChatMessage | null>(null);
+  const [isUserNearBottom, setIsUserNearBottom] = useState(true);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const streamContentRef = useRef<string>('');
+  const reasoningContentRef = useRef<string>('');
+  const streamFinishedRef = useRef<boolean>(false);
+  const userCancelledRef = useRef<boolean>(false);
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  const sessionsLoadingRef = useRef(sessionsLoading);
+  sessionsLoadingRef.current = sessionsLoading;
+  const streamUpdateTimeoutRef = useRef<number | null>(null);
   const [workspaceWidth, setWorkspaceWidth] = useState(() => {
     const saved = localStorage.getItem('workspaceWidth');
     return saved ? parseInt(saved, 10) : 400;
@@ -1308,11 +1326,6 @@ export function UserChatPage() {
   workspaceWidthRef.current = workspaceWidth;
   const workspaceResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const messageContainerRef = useRef<HTMLDivElement | null>(null);
-  const sessionsRef = useRef(sessions);
-  sessionsRef.current = sessions;
-  const sessionsLoadingRef = useRef(sessionsLoading);
-  sessionsLoadingRef.current = sessionsLoading;
-  const userCancelledRef = useRef(false);
 
   // ==================== Workspace 拖拽缩放 ====================
   const handleWorkspaceResizeStart = useCallback((e: React.MouseEvent) => {
@@ -1345,7 +1358,6 @@ export function UserChatPage() {
     };
   }, []);
 
-  const [isUserNearBottom, setIsUserNearBottom] = useState(true);
   const scrollToBottom = useCallback((behavior?: ScrollBehavior) => {
     const container = messageContainerRef.current;
     if (!container) return;
