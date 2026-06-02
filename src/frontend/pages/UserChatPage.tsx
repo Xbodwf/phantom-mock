@@ -799,40 +799,49 @@ const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockPr
   const theme = useTheme();
 
   return (
-    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mb: 1.5, mt: 0.5 }}>
       {toolCalls.map((tool, index) => (
         <Box
           key={tool.id || index}
           sx={{
-            display: 'inline-flex',
+            display: 'flex',
             alignItems: 'center',
-            gap: 0.5,
-            px: 1,
-            py: 0.3,
-            borderRadius: '4px',
+            gap: 1,
+            px: 1.5,
+            py: 0.6,
+            borderRadius: '6px',
+            borderLeft: 2,
+            borderColor: tool.status === 'executing' ? '#3b82f6' : tool.status === 'completed' ? '#22c55e' : 'divider',
             bgcolor: tool.status === 'executing'
-              ? (theme.palette.mode === 'dark' ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.1)')
+              ? (theme.palette.mode === 'dark' ? 'rgba(59,130,246,0.08)' : 'rgba(59,130,246,0.05)')
               : tool.status === 'completed'
-              ? (theme.palette.mode === 'dark' ? 'rgba(34,197,94,0.12)' : 'rgba(34,197,94,0.08)')
-              : 'action.hover',
-            opacity: tool.status === 'executing' ? 0.85 : 0.7,
-            transition: 'opacity 0.2s',
+              ? (theme.palette.mode === 'dark' ? 'rgba(34,197,94,0.08)' : 'rgba(34,197,94,0.05)')
+              : 'transparent',
+            opacity: tool.status === 'executing' ? 1 : 0.65,
+            animation: `fadeInTool 0.3s ease ${index * 0.1}s both`,
+            '@keyframes fadeInTool': {
+              from: { opacity: 0, transform: 'translateY(4px)' },
+              to: { opacity: 1, transform: 'translateY(0)' },
+            },
           }}
         >
-          {tool.status === 'executing' ? (
-            <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: '#3b82f6', animation: 'streaming-dot 1.4s ease-in-out infinite' }} />
-          ) : tool.status === 'completed' ? (
-            <Check size={10} style={{ color: '#22c55e' }} />
-          ) : (
-            <Wrench size={10} />
-          )}
+          <Box sx={{ width: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            {tool.status === 'executing' ? (
+              <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#3b82f6', animation: 'streaming-dot 1.4s ease-in-out infinite' }} />
+            ) : tool.status === 'completed' ? (
+              <Check size={12} style={{ color: '#22c55e' }} />
+            ) : (
+              <Wrench size={12} />
+            )}
+          </Box>
           <Typography
             variant="caption"
             sx={{
-              fontWeight: 500,
+              fontWeight: 600,
               color: 'text.secondary',
-              fontSize: '0.7rem',
-              lineHeight: 1.2,
+              fontSize: '0.72rem',
+              letterSpacing: '0.02em',
+              flexShrink: 0,
             }}
           >
             {TOOL_FRIENDLY_NAMES[tool.name] || tool.name}
@@ -842,13 +851,13 @@ const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockPr
               variant="caption"
               component="span"
               sx={{
-                fontFamily: 'monospace',
+                fontFamily: 'ui-monospace, SFMono-Regular, monospace',
                 fontSize: '0.65rem',
                 color: 'text.disabled',
-                maxWidth: 120,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
+                ml: 0.5,
               }}
             >
               {formatToolArgs(tool)}

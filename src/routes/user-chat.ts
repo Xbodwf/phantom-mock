@@ -208,6 +208,21 @@ async function streamWithBuiltinTools(
   let allContent = '';
   const forwardModel = getForwardModelName(runtimeModel, body.model);
   let currentBody = { ...body, stream: true, model: forwardModel };
+
+  // 注入不可被用户 system prompt 覆盖的分步执行指令
+  const stepByStepPrompt = {
+    role: 'system',
+    content: 'IMPORTANT: You must execute tool calls ONE AT A TIME. When you have multiple tasks, call only the first tool, wait for its result, then decide the next action based on the result. Never issue multiple tool calls in the same response.',
+  };
+  const messages = currentBody.messages || [];
+  const lastSystemIdx = messages.length - 1 - [...messages].reverse().findIndex((m: any) => m.role === 'system');
+  if (lastSystemIdx >= 0) {
+    messages.splice(lastSystemIdx + 1, 0, stepByStepPrompt);
+  } else {
+    messages.unshift(stepByStepPrompt);
+  }
+  currentBody.messages = messages;
+
   const maxRounds = 15;
   let lastTextRound = -1;
 
@@ -419,6 +434,7 @@ async function streamWithBuiltinTools(
     console.log('[streamWithBuiltinTools] Tool calls found:', toolCallBuffers.size);
 
     // 有工具调用 → 执行内置工具
+    // 单步执行：每轮只执行第一个内置工具
     const toolCalls = Array.from(toolCallBuffers.values()).filter(tc =>
       BUILTIN_TOOL_NAMES.has(tc.name)
     );
@@ -428,23 +444,20 @@ async function streamWithBuiltinTools(
       return allContent;
     }
 
-    console.log('[streamWithBuiltinTools] Executing builtin tools:', toolCalls.map(tc => tc.name).join(','));
+    console.log('[streamWithBuiltinTools] Executing first builtin tool:', toolCalls[0].name);
 
-    // Send "executing" progress for each tool
-    for (const tc of toolCalls) {
-      res.write(buildToolProgressChunk(requestId, body.model, tc.id, tc.name, 'executing'));
+    const activeTc = toolCalls[0];
+
+    // Send "executing" progress
+    res.write(buildToolProgressChunk(requestId, body.model, activeTc.id, activeTc.name, 'executing'));
+
+    let toolResult;
+    try {
+      toolResult = await executeBuiltinTool({ name: activeTc.name, arguments: activeTc.args, tool_call_id: activeTc.id }, sessionId);
+    } catch (e: any) {
+      toolResult = { role: 'tool', tool_call_id: activeTc.id, content: `Error: ${e.message}` };
     }
-
-    // Execute tools in parallel, send individual "completed" as each resolves
-    const toolResults = await Promise.all(
-      toolCalls.map(tc =>
-        executeBuiltinTool({ name: tc.name, arguments: tc.args, tool_call_id: tc.id }, sessionId)
-          .then(result => {
-            res.write(buildToolProgressChunk(requestId, body.model, tc.id, tc.name, 'completed', result.content));
-            return result;
-          })
-      )
-    );
+    res.write(buildToolProgressChunk(requestId, body.model, activeTc.id, activeTc.name, 'completed', toolResult.content));
 
     // 检测 AI 是否连续多轮只调工具不输出文本
     if (allContent.length > 0) lastTextRound = round;
@@ -461,17 +474,14 @@ async function streamWithBuiltinTools(
     newMessages.push({
       role: 'assistant',
       content: null,
-      tool_calls: toolCalls.map(tc => {
-        const entry: any = {
-          id: tc.id,
-          type: 'function',
-          function: { name: tc.name, arguments: tc.args },
-        };
-        if (tc.extra) entry.extra_content = tc.extra;
-        return entry;
-      }),
+      tool_calls: [{
+        id: activeTc.id,
+        type: 'function',
+        function: { name: activeTc.name, arguments: activeTc.args },
+        ...(activeTc.extra ? { extra_content: activeTc.extra } : {}),
+      }],
     });
-    for (const r of toolResults) newMessages.push(r);
+    newMessages.push(toolResult);
     currentBody = { ...currentBody, messages: newMessages, stream: false };
   }
 
