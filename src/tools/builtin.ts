@@ -2,7 +2,7 @@ import { parse } from 'node-html-parser';
 import { getChatSessionById, updateChatSession, FileNode } from '../db/chatSessions.js';
 import { executeBashWasm } from './bash-wasm.js';
 
-export const BUILTIN_TOOL_NAMES = new Set(['web_fetch', 'web_search', 'terminal', 'file_read', 'file_write', 'file_list']);
+export const BUILTIN_TOOL_NAMES = new Set(['web_fetch', 'web_search', 'file_read', 'file_write', 'file_list', 'edit_file']);
 
 export function hasBuiltinTools(tools: any[]): boolean {
   if (!tools) return false;
@@ -58,23 +58,23 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
       },
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'terminal',
-      description: 'Simulate a terminal command in the project workspace. Supports: ls, cat, node, npm, mkdir, touch, pwd, echo, clear. Use this to explore the project structure, run code, or install dependencies.',
-      parameters: {
-        type: 'object',
-        properties: {
-          command: {
-            type: 'string',
-            description: 'The shell command to execute',
-          },
-        },
-        required: ['command'],
-      },
-    },
-  },
+  // {
+  //   type: 'function',
+  //   function: {
+  //     name: 'terminal',
+  //     description: 'Simulate a terminal command in the project workspace. Supports: ls, cat, node, npm, mkdir, touch, pwd, echo, clear. Use this to explore the project structure, run code, or install dependencies.',
+  //     parameters: {
+  //       type: 'object',
+  //       properties: {
+  //         command: {
+  //           type: 'string',
+  //           description: 'The shell command to execute',
+  //         },
+  //       },
+  //       required: ['command'],
+  //     },
+  //   },
+  // },
   {
     type: 'function',
     function: {
@@ -126,6 +126,46 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
             description: 'Directory path to list (default: root /)',
           },
         },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_file',
+      description: 'Edit a file in the project workspace. You can replace, add, or remove sections of an existing file. Operations are applied sequentially in the order given.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'Path to the file (e.g. src/index.js)',
+          },
+          operations: {
+            type: 'array',
+            description: 'List of edit operations to apply in order. Each operation is applied to the result of the previous one.',
+            items: {
+              type: 'object',
+              properties: {
+                op: {
+                  type: 'string',
+                  enum: ['replace', 'add', 'remove'],
+                  description: 'replace = find oldString and replace with newString; add = find oldString and insert newString after it; remove = find oldString and delete it',
+                },
+                oldString: {
+                  type: 'string',
+                  description: 'For replace/remove: exact text to find. For add: text to search for (content is inserted after this). Must match exactly.',
+                },
+                newString: {
+                  type: 'string',
+                  description: 'For replace: replacement text. For add: text to insert after oldString. Not used for remove.',
+                },
+              },
+              required: ['op'],
+            },
+          },
+        },
+        required: ['path', 'operations'],
       },
     },
   },
@@ -280,6 +320,59 @@ async function executeFileList(args: { path?: string }, sessionId?: string): Pro
   return listNodes(node.children || [], false).join('\n') || '(empty)';
 }
 
+async function executeEditFile(args: { path: string; operations: Array<{ op: string; oldString?: string; newString?: string }> }, sessionId?: string): Promise<string> {
+  if (!sessionId) return 'Error: No active session';
+  const session = await getChatSessionById(sessionId);
+  if (!session) return 'Error: Session not found';
+  const fileTree = session.fileTree || [];
+
+  const parts = args.path.split('/').filter(Boolean);
+  const node = findNode(fileTree, parts);
+  if (!node) return `Error: ${args.path}: No such file or directory`;
+  if (node.type === 'directory') return `Error: ${args.path}: Is a directory`;
+
+  let content = node.content || '';
+  const appliedOps: string[] = [];
+
+  for (let i = 0; i < args.operations.length; i++) {
+    const op = args.operations[i];
+    switch (op.op) {
+      case 'replace': {
+        if (!op.oldString) return `Error: Operation ${i}: oldString is required for replace`;
+        if (op.newString === undefined) return `Error: Operation ${i}: newString is required for replace`;
+        const idx = content.indexOf(op.oldString);
+        if (idx === -1) return `Error: Operation ${i}: Could not find '${op.oldString.substring(0, 80)}' in ${args.path}`;
+        content = content.substring(0, idx) + op.newString + content.substring(idx + op.oldString.length);
+        appliedOps.push(`replaced at ${idx}`);
+        break;
+      }
+      case 'add': {
+        if (!op.oldString) return `Error: Operation ${i}: oldString (search text) is required for add`;
+        if (op.newString === undefined) return `Error: Operation ${i}: newString (content to insert) is required for add`;
+        const idx = content.indexOf(op.oldString);
+        if (idx === -1) return `Error: Operation ${i}: Could not find '${op.oldString.substring(0, 80)}' in ${args.path}`;
+        content = content.substring(0, idx + op.oldString.length) + op.newString + content.substring(idx + op.oldString.length);
+        appliedOps.push(`added after ${idx + op.oldString.length}`);
+        break;
+      }
+      case 'remove': {
+        if (!op.oldString) return `Error: Operation ${i}: oldString is required for remove`;
+        const idx = content.indexOf(op.oldString);
+        if (idx === -1) return `Error: Operation ${i}: Could not find '${op.oldString.substring(0, 80)}' in ${args.path}`;
+        content = content.substring(0, idx) + content.substring(idx + op.oldString.length);
+        appliedOps.push(`removed at ${idx}`);
+        break;
+      }
+      default:
+        return `Error: Operation ${i}: unknown operation '${op.op}' (must be replace, add, or remove)`;
+    }
+  }
+
+  node.content = content;
+  await updateChatSession(sessionId, { fileTree } as any);
+  return `Edited ${args.path}: ${appliedOps.join('; ')}`;
+}
+
 // ---- 主入口 ----
 
 export async function executeBuiltinTool(
@@ -312,6 +405,9 @@ export async function executeBuiltinTool(
       break;
     case 'file_list':
       result = await executeFileList(args, sessionId);
+      break;
+    case 'edit_file':
+      result = await executeEditFile(args, sessionId);
       break;
     default:
       result = `Unknown tool: ${toolCall.name}`;

@@ -2287,6 +2287,15 @@ export function UserChatPage() {
           updateSession(currentSessionId, { messages: finalMessages }).catch(err => {
             console.error('Failed to sync session:', err);
           });
+
+          // 刷新 fileTree（AI 可能通过 file_write / edit_file 创建了文件）
+          loadSessionFromServer(currentSessionId).then(data => {
+            if (data?.fileTree && data.fileTree.length > 0) {
+              setSessions(prev => prev.map(s =>
+                s.id === currentSessionId ? { ...s, fileTree: data.fileTree } : s
+              ));
+            }
+          });
         }
       } else {
         const data = await response.json();
@@ -2324,6 +2333,15 @@ export function UserChatPage() {
         // 同步到服务器
         updateSession(currentSessionId, { messages: nonStreamMessages }).catch(err => {
           console.error('Failed to sync session:', err);
+        });
+
+        // 刷新 fileTree（AI 可能通过工具创建了文件）
+        loadSessionFromServer(currentSessionId).then(data => {
+          if (data?.fileTree && data.fileTree.length > 0) {
+            setSessions(prev => prev.map(s =>
+              s.id === currentSessionId ? { ...s, fileTree: data.fileTree } : s
+            ));
+          }
         });
       }
     } catch (err: any) {
