@@ -318,7 +318,7 @@ const ALLOWED_CODE_TYPES = [
   '.json', '.yaml', '.yml', '.xml', '.html', '.css', '.scss', '.less',
   '.sql', '.sh', '.bash', '.lua', '.rs', '.r', '.m', '.scala', '.clj'
 ];
-const DEFAULT_TIMEOUT = 60;
+const DEFAULT_TIMEOUT = 300;
 
 const API_TYPES: { value: ApiType; label: string }[] = [
   { value: 'openai-chat', label: 'OpenAI Chat Completions' },
@@ -3343,17 +3343,18 @@ export function UserChatPage() {
               {t('chat.timeout', '超时时间')}: {currentSession?.timeout || DEFAULT_TIMEOUT}s
             </Typography>
           </Box>
-          <Slider
+            <Slider
             value={currentSession?.timeout || DEFAULT_TIMEOUT}
             onChange={(_, value) => updateCurrentTimeout(value as number)}
             min={10}
-            max={300}
+            max={1000}
             step={10}
             marks={[
               { value: 10, label: '10s' },
               { value: 60, label: '60s' },
-              { value: 120, label: '120s' },
               { value: 300, label: '300s' },
+              { value: 600, label: '600s' },
+              { value: 1000, label: '1000s' },
             ]}
             sx={{ mt: 1 }}
           />
