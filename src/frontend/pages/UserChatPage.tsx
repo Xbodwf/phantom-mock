@@ -778,6 +778,7 @@ const TOOL_FRIENDLY_NAMES: Record<string, string> = {
   file_read: '读取文件',
   file_write: '写入文件',
   file_list: '列出文件',
+  edit_file: '编辑文件',
 };
 
 function formatToolArgs(tool: ToolCall): string {
@@ -789,6 +790,7 @@ function formatToolArgs(tool: ToolCall): string {
     if (tool.name === 'file_read') return args.path || '';
     if (tool.name === 'file_write') return args.path || '';
     if (tool.name === 'file_list') return args.path || '/';
+    if (tool.name === 'edit_file') return `${args.path || ''} (${(args.operations || []).length} ops)`;
     return tool.arguments;
   } catch {
     return tool.arguments;
@@ -2221,6 +2223,7 @@ export function UserChatPage() {
                         });
                       }
                     }
+                    throttledUpdate();
                   }
 
                   // 处理工具执行进度（由服务端在工具执行期间发送）

@@ -482,7 +482,7 @@ async function streamWithBuiltinTools(
       }],
     });
     newMessages.push(toolResult);
-    currentBody = { ...currentBody, messages: newMessages, stream: false };
+    currentBody = { ...currentBody, messages: newMessages, stream: true };
   }
 
   console.log('[streamWithBuiltinTools] Exceeded max rounds, returning:', allContent.length);
