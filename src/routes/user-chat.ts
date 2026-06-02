@@ -254,8 +254,14 @@ async function streamWithBuiltinTools(
         });
 
         if (axiosResp.status !== 200) {
+          console.error('[streamWithBuiltinTools] Upstream returned', axiosResp.status);
+          if (currentBody.stream) {
+            console.log('[streamWithBuiltinTools] Retrying round', round, 'with non-streaming (non-200)');
+            currentBody = { ...currentBody, stream: false };
+            round--;
+            continue;
+          }
           const errBody = typeof axiosResp.data === 'object' ? JSON.stringify(axiosResp.data) : String(axiosResp.data);
-          console.error('[streamWithBuiltinTools] Upstream returned', axiosResp.status, errBody.slice(0, 200));
           if (round > 0) {
             res.write(`data: ${JSON.stringify({
               id: requestId,
@@ -413,6 +419,12 @@ async function streamWithBuiltinTools(
       }
     } catch (e: any) {
       console.error('[streamWithBuiltinTools] axios error:', e.message);
+      if (currentBody.stream) {
+        console.log('[streamWithBuiltinTools] Retrying round', round, 'with non-streaming');
+        currentBody = { ...currentBody, stream: false };
+        round--;
+        continue;
+      }
       if (round > 0) {
         res.write(`data: ${JSON.stringify({
           id: requestId,
