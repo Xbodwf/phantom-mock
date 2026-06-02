@@ -798,75 +798,111 @@ function formatToolArgs(tool: ToolCall): string {
 }
 
 const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockProps) {
-  const theme = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  const anyExecuting = toolCalls.some(tc => tc.status === 'executing');
+  const allDone = toolCalls.every(tc => tc.status === 'completed');
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mb: 1.5, mt: 0.5 }}>
-      {toolCalls.map((tool, index) => (
+    <Box sx={{ mb: 1.5 }}>
+      <Box
+        onClick={() => setExpanded(!expanded)}
+        sx={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 0.5,
+          cursor: 'pointer',
+          userSelect: 'none',
+          color: 'text.secondary',
+          '&:hover': { color: 'text.primary' },
+          transition: 'color 0.15s',
+        }}
+      >
         <Box
-          key={tool.id || index}
           sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1,
-            px: 1.5,
-            py: 0.6,
-            borderRadius: '6px',
-            borderLeft: 2,
-            borderColor: tool.status === 'executing' ? '#3b82f6' : tool.status === 'completed' ? '#22c55e' : 'divider',
-            bgcolor: tool.status === 'executing'
-              ? (theme.palette.mode === 'dark' ? 'rgba(59,130,246,0.08)' : 'rgba(59,130,246,0.05)')
-              : tool.status === 'completed'
-              ? (theme.palette.mode === 'dark' ? 'rgba(34,197,94,0.08)' : 'rgba(34,197,94,0.05)')
-              : 'transparent',
-            opacity: tool.status === 'executing' ? 1 : 0.65,
-            animation: `fadeInTool 0.3s ease ${index * 0.1}s both`,
-            '@keyframes fadeInTool': {
-              from: { opacity: 0, transform: 'translateY(4px)' },
-              to: { opacity: 1, transform: 'translateY(0)' },
+            width: 4,
+            height: 4,
+            borderRadius: '50%',
+            bgcolor: anyExecuting ? 'primary.main' : allDone ? '#22c55e' : 'text.disabled',
+            animation: anyExecuting ? 'reasoning-pulse 1.2s ease-in-out infinite' : 'none',
+            '@keyframes reasoning-pulse': {
+              '0%, 100%': { opacity: 0.4, transform: 'scale(1)' },
+              '50%': { opacity: 1, transform: 'scale(1.3)' },
             },
           }}
-        >
-          <Box sx={{ width: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            {tool.status === 'executing' ? (
-              <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#3b82f6', animation: 'streaming-dot 1.4s ease-in-out infinite' }} />
-            ) : tool.status === 'completed' ? (
-              <Check size={12} style={{ color: '#22c55e' }} />
-            ) : (
-              <Wrench size={12} />
-            )}
-          </Box>
-          <Typography
-            variant="caption"
-            sx={{
-              fontWeight: 600,
-              color: 'text.secondary',
-              fontSize: '0.72rem',
-              letterSpacing: '0.02em',
-              flexShrink: 0,
-            }}
-          >
-            {TOOL_FRIENDLY_NAMES[tool.name] || tool.name}
-          </Typography>
-          {formatToolArgs(tool) && (
-            <Typography
-              variant="caption"
-              component="span"
+        />
+        <Typography variant="caption" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+          {anyExecuting ? '工具调用中...' : allDone ? `已完成 ${toolCalls.length} 个工具` : `${toolCalls.length} 个工具`}
+        </Typography>
+        {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+      </Box>
+      <Collapse in={expanded}>
+        <Box sx={{ mt: 0.5, pl: 1.5, ml: 1, borderLeft: 2, borderColor: 'divider' }}>
+          {toolCalls.map((tool, index) => (
+            <Box
+              key={tool.id || index}
               sx={{
-                fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-                fontSize: '0.65rem',
-                color: 'text.disabled',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                ml: 0.5,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                py: 0.5,
+                fontSize: '0.8125rem',
+                color: 'text.secondary',
+                animation: `fadeInTool 0.3s ease ${index * 0.08}s both`,
+                '@keyframes fadeInTool': {
+                  from: { opacity: 0, transform: 'translateY(4px)' },
+                  to: { opacity: 1, transform: 'translateY(0)' },
+                },
               }}
             >
-              {formatToolArgs(tool)}
-            </Typography>
+              <Box sx={{ width: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                {tool.status === 'executing' ? (
+                  <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: '#3b82f6', animation: 'tool-dot 1.4s ease-in-out infinite' }} />
+                ) : tool.status === 'completed' ? (
+                  <Check size={10} style={{ color: '#22c55e' }} />
+                ) : (
+                  <Wrench size={10} />
+                )}
+              </Box>
+              <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '0.7rem', flexShrink: 0, color: 'text.secondary' }}>
+                {TOOL_FRIENDLY_NAMES[tool.name] || tool.name}
+              </Typography>
+              {formatToolArgs(tool) && (
+                <Typography
+                  variant="caption"
+                  component="span"
+                  sx={{
+                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                    fontSize: '0.65rem',
+                    color: 'text.disabled',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {formatToolArgs(tool)}
+                </Typography>
+              )}
+            </Box>
+          ))}
+          {anyExecuting && (
+            <Box
+              component="span"
+              sx={{
+                display: 'inline-block',
+                width: 6,
+                height: 14,
+                verticalAlign: 'middle',
+                bgcolor: 'text.disabled',
+                animation: 'tool-cursor 0.8s step-end infinite',
+                '@keyframes tool-cursor': {
+                  '0%, 100%': { opacity: 1 },
+                  '50%': { opacity: 0 },
+                },
+              }}
+            />
           )}
         </Box>
-      ))}
+      </Collapse>
     </Box>
   );
 });

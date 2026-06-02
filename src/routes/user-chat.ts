@@ -212,7 +212,7 @@ async function streamWithBuiltinTools(
   // 注入不可被用户 system prompt 覆盖的分步执行指令
   const stepByStepPrompt = {
     role: 'system',
-    content: 'IMPORTANT: You must execute tool calls ONE AT A TIME. When you have multiple tasks, call only the first tool, wait for its result, then decide the next action based on the result. Never issue multiple tool calls in the same response.',
+    content: 'IMPORTANT RULES:\n1. FIRST respond to the user with text before calling any tools. Acknowledge their request.\n2. Call tools ONE AT A TIME. Never issue multiple tool calls in the same response.\n3. After each tool result, briefly explain what happened or what you learned.\n4. When all tasks are complete, provide a clear summary of what was done.',
   };
   const messages = currentBody.messages || [];
   const lastSystemIdx = messages.length - 1 - [...messages].reverse().findIndex((m: any) => m.role === 'system');
@@ -464,7 +464,7 @@ async function streamWithBuiltinTools(
 
     // 构建 follow-up 消息
     const newMessages = [...(currentBody.messages || [])];
-    if (round - lastTextRound >= 4 && round < maxRounds - 2) {
+    if (round - lastTextRound >= 2 && round < maxRounds - 2) {
       // 连续 4+ 轮无文本输出，提示 AI 总结
       newMessages.push({
         role: 'system',
