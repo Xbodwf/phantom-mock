@@ -2478,9 +2478,11 @@ export function UserChatPage() {
 
                   // 处理工具调用（按 index 聚合，因为流式块中 id 只出现在第一块）
                   if (delta?.tool_calls) {
+                    const newToolCalls: ToolCall[] = [];
                     for (const tc of delta.tool_calls) {
                       const idx = tc.index ?? toolCalls.length;
-                      const existing = toolCalls.find((t) => t._idx === idx);
+                      // 跳过已完成的工具调用（跨轮次时 index 会复用）
+                      const existing = toolCalls.find((t) => t._idx === idx && !t.result);
                       if (existing) {
                         if (tc.function?.arguments) {
                           existing.arguments += tc.function.arguments;
@@ -2488,22 +2490,21 @@ export function UserChatPage() {
                         if (tc.function?.name) existing.name = tc.function.name;
                         if (tc.id) existing.id = tc.id;
                       } else {
-                        toolCalls.push({
+                        const entry: ToolCall = {
                           id: tc.id || `tc_${idx}`,
                           name: tc.function?.name || '',
                           arguments: tc.function?.arguments || '',
                           _idx: idx,
-                        });
+                        };
+                        toolCalls.push(entry);
+                        newToolCalls.push(entry);
                       }
                     }
                     throttledUpdate();
-                    // 增量事件追踪：工具调用首次出现时创建 segment
-                    const lastSegIsTc = contentEvents.length > 0 && contentEvents[contentEvents.length - 1].type === 'tool_call';
-                    if (!lastSegIsTc) {
-                      for (const buf of toolCalls) {
-                        if (buf.name && !contentEvents.some(e => e.type === 'tool_call' && e.toolCall?._idx === buf._idx)) {
-                          contentEvents.push({ type: 'tool_call', toolCall: { ...buf } });
-                        }
+                    // 增量事件追踪：仅对本次新增的工具调用创建 segment（避免跨轮次 _idx 冲突）
+                    for (const entry of newToolCalls) {
+                      if (entry.name) {
+                        contentEvents.push({ type: 'tool_call', toolCall: { ...entry } });
                       }
                     }
                   }

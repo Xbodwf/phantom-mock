@@ -227,8 +227,8 @@ async function streamWithBuiltinTools(
   }
   currentBody.messages = messages;
 
-  const maxRounds = 15;
-  let lastTextRound = -1;
+  const maxRounds = 30;
+  let lastTextRound = 0;
 
   for (let round = 0; round < maxRounds; round++) {
     console.log('[streamWithBuiltinTools] Round', round, 'messages count:', currentBody.messages?.length);
@@ -488,8 +488,8 @@ async function streamWithBuiltinTools(
 
     // 构建 follow-up 消息
     const newMessages = [...(currentBody.messages || [])];
-    if (round - lastTextRound >= 2 && round < maxRounds - 2) {
-      // 连续 4+ 轮无文本输出，提示 AI 总结
+    if (round - lastTextRound >= 4 && round < maxRounds - 2) {
+      // 连续 5+ 轮无文本输出，提示 AI 总结
       newMessages.push({
         role: 'system',
         content: 'You have used many tool calls. Based on the information you have gathered so far, please provide a comprehensive answer to the user\'s original question now. Do not call additional tools.',
