@@ -1658,6 +1658,10 @@ export function UserChatPage() {
         console.log(`[Chat] Session loaded: isOwner=${sessionData.isOwner}, isReadOnly=${sessionData.isReadOnly}, messages=${sessionData.messages?.length || 0}`);
         setError(''); // 清除错误
 
+        // 从服务端加载的会话，_isStreaming 已无意义，清理避免卡 UI
+        if (sessionData.messages) {
+          sessionData.messages = sessionData.messages.map((m: any) => ({ ...m, _isStreaming: undefined }));
+        }
         // 关键：添加到本地会话列表，以便 currentSession 能找到
         setSessions((prev) => [...prev, sessionData]);
       })
@@ -2363,19 +2367,19 @@ export function UserChatPage() {
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
         let toolCalls: ToolCall[] = [];
-
-        let orderedSegments: ContentSegment[] = [];
-
+        let contentEvents: ContentSegment[] = [];
+        let contentEventHasToolCall = false;
         const rebuildSegments = (): ContentSegment[] => {
-          const segs: ContentSegment[] = [];
-          const reasoning = reasoningContentRef.current;
-          const text = streamContentRef.current;
-          if (reasoning) segs.push({ type: 'text', text: `reasoning:${reasoning}` });
-          if (text) segs.push({ type: 'text', text });
-          for (const tc of toolCalls) {
-            if (tc.name) segs.push({ type: 'tool_call', toolCall: { ...tc } });
-          }
-          return segs;
+          // contentEvents 已在 streaming 中增量累积，保持原始次序
+          // 只需同步 tool_call 段的实时状态
+          const synced = contentEvents.map(seg => {
+            if (seg.type === 'tool_call' && seg.toolCall) {
+              const live = toolCalls.find(tc => tc.id === seg.toolCall!.id || tc._idx === seg.toolCall!._idx);
+              if (live) seg.toolCall = { ...live };
+            }
+            return seg;
+          });
+          return synced;
         };
 
         const updateContent = () => {
@@ -2447,6 +2451,13 @@ export function UserChatPage() {
                   const reasoningContent = delta?.reasoning_content;
                   if (reasoningContent) {
                     reasoningContentRef.current += reasoningContent;
+                    // 增量事件追踪：追加到 reasoning 段或新建
+                    const rLast = contentEvents[contentEvents.length - 1];
+                    if (rLast?.type === 'text' && rLast.text?.startsWith('reasoning:')) {
+                      rLast.text += reasoningContent;
+                    } else {
+                      contentEvents.push({ type: 'text', text: 'reasoning:' + reasoningContent });
+                    }
                     throttledUpdate();
                   }
 
@@ -2454,6 +2465,13 @@ export function UserChatPage() {
                   const content = delta?.content || '';
                   if (content) {
                     streamContentRef.current += content;
+                    // 增量事件追踪
+                    const tLast = contentEvents[contentEvents.length - 1];
+                    if (tLast?.type === 'text' && !tLast.text?.startsWith('reasoning:')) {
+                      tLast.text += content;
+                    } else {
+                      contentEvents.push({ type: 'text', text: content });
+                    }
                     throttledUpdate();
                   }
 
@@ -2478,6 +2496,15 @@ export function UserChatPage() {
                       }
                     }
                     throttledUpdate();
+                    // 增量事件追踪：工具调用首次出现时创建 segment
+                    const lastSegIsTc = contentEvents.length > 0 && contentEvents[contentEvents.length - 1].type === 'tool_call';
+                    if (!lastSegIsTc) {
+                      for (const buf of toolCalls) {
+                        if (buf.name && !contentEvents.some(e => e.type === 'tool_call' && e.toolCall?._idx === buf._idx)) {
+                          contentEvents.push({ type: 'tool_call', toolCall: { ...buf } });
+                        }
+                      }
+                    }
                   }
 
                   // 处理工具执行进度（由服务端在工具执行期间发送）
@@ -2580,7 +2607,10 @@ export function UserChatPage() {
             for (const tcc of (msg.toolCalls || [])) {
               if (tcc.name) nonStreamSegs.push({ type: 'tool_call', toolCall: { ...tcc } });
             }
-            msg.segments = nonStreamSegs.length > 0 ? nonStreamSegs : undefined;
+            // 追加而非替换：保留已存在的 streaming segments（多轮工具调用）
+            msg.segments = nonStreamSegs.length > 0
+              ? ((msg.segments || []).length > 0 ? [...msg.segments, ...nonStreamSegs] : nonStreamSegs)
+              : msg.segments;
             msg.toolCalls = toolCalls;
             msg.model = session.model;
             msg.usage = data.usage;
