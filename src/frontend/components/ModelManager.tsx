@@ -54,6 +54,10 @@ import {
   Settings,
   Server,
   Cloud,
+  Brain,
+  MessageSquare,
+  Zap,
+  Sparkles,
 } from 'lucide-react';
 import { useServer } from '../contexts/ServerContext';
 import type { Model, ModelUpdateParams, Provider, Node } from '../types';
@@ -185,6 +189,8 @@ interface FormData {
   supported_features: string;
   icon: string;
   allowManualReply: boolean;      // 是否允许人工回复
+  thinkingModel: boolean;          // 是否启用思考模式
+  thinkingModelType: string;       // 思考模型类型
   // 新增字段
   rpm: number;
   tpm: number;
@@ -226,6 +232,8 @@ const defaultFormData: FormData = {
   supported_features: '',
   icon: '',
   allowManualReply: false,
+  thinkingModel: false,
+  thinkingModelType: '',
   rpm: 0,
   tpm: 0,
   maxConcurrentRequests: 100,
@@ -388,6 +396,8 @@ export default function ModelManager() {
         supported_features: model.supported_features?.join(', ') || '',
         icon: model.icon || '',
         allowManualReply: model.allowManualReply || false,
+        thinkingModel: model.thinkingModel || false,
+        thinkingModelType: model.thinkingModelType || '',
         rpm: model.rpm || 0,
         tpm: model.tpm || 0,
         maxConcurrentRequests: model.maxConcurrentRequests || 100,
@@ -447,6 +457,8 @@ export default function ModelManager() {
       supported_features: formData.supported_features ? formData.supported_features.split(',').map(s => s.trim()).filter(Boolean) : undefined,
       icon: formData.icon || undefined,
       allowManualReply: formData.allowManualReply,
+      thinkingModel: formData.thinkingModel || undefined,
+      thinkingModelType: formData.thinkingModelType || undefined,
       // 新增字段
       rpm: formData.rpm || undefined,
       tpm: formData.tpm || undefined,
@@ -1045,6 +1057,63 @@ export default function ModelManager() {
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
                   {t('models.manager.allowManualReplyHelper', '开启后，该模型的请求会在请求列表中显示，供管理员手动回复')}
                 </Typography>
+
+                {/* 思考模式配置 */}
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.thinkingModel}
+                      onChange={(e) => {
+                        setFormData({ ...formData, thinkingModel: e.target.checked });
+                        if (!e.target.checked) setFormData(f => ({ ...f, thinkingModelType: '' }));
+                      }}
+                    />
+                  }
+                  label={
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <Brain size={16} />
+                      {t('models.manager.thinkingModel', '思考模型')}
+                    </Box>
+                  }
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                  {t('models.manager.thinkingModelHelper', '开启后，前端会话将显示思考模式开关；思考参数的注入方式由下方的思考模型类型决定')}
+                </Typography>
+
+                {formData.thinkingModel && (
+                  <FormControl fullWidth size="small" sx={{ mb: 1.5 }}>
+                    <InputLabel>{t('models.manager.thinkingModelType', '思考模型类型')}</InputLabel>
+                    <Select
+                      value={formData.thinkingModelType}
+                      label={t('models.manager.thinkingModelType', '思考模型类型')}
+                      onChange={(e) => setFormData({ ...formData, thinkingModelType: e.target.value })}
+                    >
+                      <MenuItem value="" disabled>
+                        {t('models.manager.selectThinkingType', '请选择思考模型类型')}
+                      </MenuItem>
+                      <MenuItem value="openai">
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Sparkles size={14} /> OpenAI (o1/o3 — reasoning_effort)
+                        </Box>
+                      </MenuItem>
+                      <MenuItem value="deepseek">
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Brain size={14} /> DeepSeek (R1 — reasoning_effort)
+                        </Box>
+                      </MenuItem>
+                      <MenuItem value="gemini">
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Zap size={14} /> Gemini (gemini 2.5 — thinking_config)
+                        </Box>
+                      </MenuItem>
+                      <MenuItem value="claude">
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <MessageSquare size={14} /> Claude (anthropic — thinking block)
+                        </Box>
+                      </MenuItem>
+                    </Select>
+                  </FormControl>
+                )}
 
                 <Divider sx={{ my: 1 }} />
 

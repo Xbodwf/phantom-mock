@@ -154,6 +154,8 @@ export interface Model {
   supported_features?: string[];
   require_api_key?: boolean;
   allowManualReply?: boolean;     // 是否允许人工回复
+  thinkingModel?: boolean;        // 是否启用思考模式
+  thinkingModelType?: 'openai' | 'deepseek' | 'gemini' | 'claude';  // 思考模型类型
 
   // 评价系统
   rating?: {

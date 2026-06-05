@@ -66,6 +66,7 @@ import {
   Info,
   PanelRightClose,
   PanelRight,
+  Terminal,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import hljs from 'highlight.js';
@@ -98,6 +99,7 @@ type ChatMessage = {
   thinking?: string;
   reasoning_content?: string; // API级推理内容（如 DeepSeek-R1 的 reasoning_content）
   toolCalls?: ToolCall[];
+  segments?: ContentSegment[]; // 有序内容段（支持内联工具调用展示）
   model?: string;
   usage?: {
     prompt_tokens: number;
@@ -119,6 +121,13 @@ type ToolCall = {
   result?: string;
   status?: 'executing' | 'completed';
   _idx?: number;
+};
+
+// 有序内容段：文本段或工具调用段，用于内联展示
+type ContentSegment = {
+  type: 'text' | 'tool_call';
+  text?: string;
+  toolCall?: ToolCall;
 };
 
 type UploadedFile = {
@@ -149,6 +158,8 @@ type ChatSession = {
   isPublic?: boolean;
   ownerId?: string;
   thinking?: boolean;
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'max';
+  thinkingBudgetTokens?: number;
   isOwner?: boolean;
   isReadOnly?: boolean;
 };
@@ -797,115 +808,198 @@ function formatToolArgs(tool: ToolCall): string {
   }
 }
 
-const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockProps) {
+const TOOL_ICONS: Record<string, React.ReactNode> = {
+  web_search: <Globe size={14} />,
+  web_fetch: <Globe2 size={14} />,
+  terminal: <Terminal size={14} />,
+};
+
+interface ToolCallChipProps {
+  toolCall: ToolCall;
+  isStreaming?: boolean;
+}
+
+const ToolCallChip = memo(function ToolCallChip({ toolCall, isStreaming }: ToolCallChipProps) {
   const [expanded, setExpanded] = useState(false);
-  const anyExecuting = toolCalls.some(tc => tc.status === 'executing');
-  const allDone = toolCalls.every(tc => tc.status === 'completed');
+  const isExecuting = toolCall.status === 'executing' || (!toolCall.status && isStreaming);
+  const isCompleted = toolCall.status === 'completed';
+
+  // 智能参数显示
+  const argsSummary = useMemo(() => {
+    try {
+      const args = JSON.parse(toolCall.arguments);
+      if (toolCall.name === 'web_search') return args.query || '';
+      if (toolCall.name === 'web_fetch') return args.url || '';
+      if (toolCall.name === 'terminal') return args.command || '';
+      if (toolCall.name === 'file_read') return args.path || '';
+      if (toolCall.name === 'file_write') return args.path || '';
+      if (toolCall.name === 'file_list') return args.dir || args.path || '/';
+      if (toolCall.name === 'edit_file') return `${args.path || ''}${args.operations ? ` (${args.operations.length} ops)` : ''}`;
+      return Object.values(args).join(', ').slice(0, 80);
+    } catch {
+      return toolCall.arguments.slice(0, 80);
+    }
+  }, [toolCall.arguments, toolCall.name]);
+
+  // 参数结构化展示（展开时详细显示）
+  const argsDetail = useMemo(() => {
+    try {
+      const args = JSON.parse(toolCall.arguments);
+      return args;
+    } catch {
+      return null;
+    }
+  }, [toolCall.arguments]);
 
   return (
-    <Box sx={{ mb: 1.5 }}>
+    <Box
+      sx={{
+        display: 'inline-flex',
+        alignItems: 'stretch',
+        gap: 0,
+        my: 0.75,
+        mx: 0.25,
+        border: 1,
+        borderColor: isCompleted ? '#22c55e44' : isExecuting ? '#3b82f644' : 'divider',
+        borderRadius: 2,
+        bgcolor: isCompleted ? '#22c55e0a' : isExecuting ? '#3b82f60a' : 'action.hover',
+        transition: 'all 0.2s',
+        cursor: toolCall.result ? 'pointer' : 'default',
+        verticalAlign: 'middle',
+        ...(toolCall.result ? {
+          '&:hover': { borderColor: 'primary.light' },
+        } : {}),
+      }}
+      onClick={() => {
+        if (toolCall.result) setExpanded(!expanded);
+      }}
+    >
+      {/* 状态指示器 */}
       <Box
-        onClick={() => setExpanded(!expanded)}
         sx={{
-          display: 'inline-flex',
+          display: 'flex',
           alignItems: 'center',
-          gap: 0.5,
-          cursor: 'pointer',
-          userSelect: 'none',
-          color: 'text.secondary',
-          '&:hover': { color: 'text.primary' },
-          transition: 'color 0.15s',
+          px: 1,
+          bgcolor: isCompleted ? '#22c55e18' : isExecuting ? '#3b82f618' : 'transparent',
+          borderRadius: '7px 0 0 7px',
         }}
       >
+        {isExecuting ? (
+          <CircularProgress size={12} thickness={6} />
+        ) : isCompleted ? (
+          <Check size={12} color="#22c55e" />
+        ) : (
+          <Wrench size={12} />
+        )}
+      </Box>
+
+      {/* 工具名称 */}
+      <Box sx={{ display: 'flex', alignItems: 'center', px: 0.75, gap: 0.5 }}>
+        {TOOL_ICONS[toolCall.name] || <Wrench size={12} />}
+        <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '0.7rem', whiteSpace: 'nowrap', lineHeight: 1.2 }}>
+          {TOOL_FRIENDLY_NAMES[toolCall.name] || toolCall.name}
+        </Typography>
+      </Box>
+
+      {/* 参数摘要 */}
+      {argsSummary && (
         <Box
           sx={{
-            width: 4,
-            height: 4,
-            borderRadius: '50%',
-            bgcolor: anyExecuting ? 'primary.main' : allDone ? '#22c55e' : 'text.disabled',
-            animation: anyExecuting ? 'reasoning-pulse 1.2s ease-in-out infinite' : 'none',
-            '@keyframes reasoning-pulse': {
-              '0%, 100%': { opacity: 0.4, transform: 'scale(1)' },
-              '50%': { opacity: 1, transform: 'scale(1.3)' },
-            },
+            display: 'flex',
+            alignItems: 'center',
+            px: 0.75,
+            borderLeft: 1,
+            borderColor: 'divider',
+            maxWidth: 200,
           }}
-        />
-        <Typography variant="caption" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-          {anyExecuting ? '工具调用中...' : allDone ? `已完成 ${toolCalls.length} 个工具` : `${toolCalls.length} 个工具`}
-        </Typography>
-        {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-      </Box>
-      <Collapse in={expanded}>
-        <Box sx={{ mt: 0.5, pl: 1.5, ml: 1, borderLeft: 2, borderColor: 'divider' }}>
-          {toolCalls.map((tool, index) => (
-            <Box
-              key={tool.id || index}
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 1,
-                py: 0.5,
-                fontSize: '0.8125rem',
-                color: 'text.secondary',
-                animation: `fadeInTool 0.3s ease ${index * 0.08}s both`,
-                '@keyframes fadeInTool': {
-                  from: { opacity: 0, transform: 'translateY(4px)' },
-                  to: { opacity: 1, transform: 'translateY(0)' },
-                },
-              }}
-            >
-              <Box sx={{ width: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                {tool.status === 'executing' ? (
-                  <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: '#3b82f6', animation: 'tool-dot 1.4s ease-in-out infinite' }} />
-                ) : tool.status === 'completed' ? (
-                  <Check size={10} style={{ color: '#22c55e' }} />
-                ) : (
-                  <Wrench size={10} />
-                )}
-              </Box>
-              <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '0.7rem', flexShrink: 0, color: 'text.secondary' }}>
-                {TOOL_FRIENDLY_NAMES[tool.name] || tool.name}
-              </Typography>
-              {formatToolArgs(tool) && (
-                <Typography
-                  variant="caption"
-                  component="span"
-                  sx={{
-                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-                    fontSize: '0.65rem',
-                    color: 'text.disabled',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {formatToolArgs(tool)}
-                </Typography>
-              )}
-            </Box>
-          ))}
-          {anyExecuting && (
-            <Box
-              component="span"
-              sx={{
-                display: 'inline-block',
-                width: 6,
-                height: 14,
-                verticalAlign: 'middle',
-                bgcolor: 'text.disabled',
-                animation: 'tool-cursor 0.8s step-end infinite',
-                '@keyframes tool-cursor': {
-                  '0%, 100%': { opacity: 1 },
-                  '50%': { opacity: 0 },
-                },
-              }}
-            />
-          )}
+        >
+          <Typography
+            variant="caption"
+            sx={{
+              fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+              fontSize: '0.65rem',
+              color: 'text.disabled',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {argsSummary}
+          </Typography>
         </Box>
-      </Collapse>
+      )}
+
+      {/* 展开/折叠箭头（有结果时） */}
+      {toolCall.result && (
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            px: 0.5,
+            color: 'text.disabled',
+          }}
+        >
+          <ChevronDown size={10} style={{ transform: expanded ? 'rotate(180deg)' : undefined, transition: 'transform 0.2s' }} />
+        </Box>
+      )}
+
+      {/* 展开的结果详情（Popover方式） */}
+      {toolCall.result && (
+        <Collapse in={expanded} timeout="auto" unmountOnExit>
+          <Box
+            sx={{
+              position: 'absolute',
+              mt: 2.5,
+              ml: -1,
+              p: 1.5,
+              bgcolor: 'background.paper',
+              border: 1,
+              borderColor: 'divider',
+              borderRadius: 2,
+              boxShadow: 3,
+              maxWidth: 480,
+              maxHeight: 320,
+              overflow: 'auto',
+              zIndex: 10,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', mb: 0.5, display: 'block' }}>
+              执行结果
+            </Typography>
+            {argsDetail && (
+              <Box sx={{ mb: 0.5 }}>
+                {Object.entries(argsDetail).map(([k, v]) => (
+                  <Box key={k} sx={{ display: 'flex', gap: 1, fontSize: '0.7rem', mb: 0.25 }}>
+                    <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', minWidth: 60 }}>{k}</Typography>
+                    <Typography variant="caption" sx={{ color: 'text.primary', fontFamily: 'monospace', fontSize: '0.65rem', wordBreak: 'break-all' }}>
+                      {typeof v === 'string' ? v.slice(0, 200) : JSON.stringify(v).slice(0, 200)}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            )}
+            <Divider sx={{ my: 0.5 }} />
+            <Typography variant="caption" sx={{ whiteSpace: 'pre-wrap', color: 'text.primary', fontFamily: 'monospace', fontSize: '0.65rem', lineHeight: 1.4 }}>
+              {toolCall.result.length > 1000 ? toolCall.result.slice(0, 1000) + '...' : toolCall.result}
+            </Typography>
+          </Box>
+        </Collapse>
+      )}
     </Box>
   );
 });
+
+// 将工具调用列表渲染为内联 chips
+function renderToolChips(toolCalls: ToolCall[], isStreaming?: boolean): React.ReactNode {
+  return (
+    <Box sx={{ display: 'inline-flex', flexWrap: 'wrap', gap: 0.5, alignItems: 'center' }}>
+      {toolCalls.map((tc, i) => (
+        <ToolCallChip key={tc.id || i} toolCall={tc} isStreaming={isStreaming} />
+      ))}
+    </Box>
+  );
+}
 
 // ==================== 图片附件组件 ====================
 interface ImageAttachmentProps {
@@ -1195,8 +1289,8 @@ const MessageBubble = memo(function MessageBubble({
       </Avatar>
 
       <Box sx={{ flex: 1, minWidth: 0, maxWidth: { xs: '100%', sm: '85%' } }}>
-        {/* API级推理内容 (reasoning_content) - 优先于 <thinking> 标签 */}
-        {message.reasoning_content ? (
+        {/* API级推理内容 - 仅在没有 segments 时显示（新格式已内联在 segments 中） */}
+        {!message.segments && message.reasoning_content ? (
           <ReasoningBlock
             content={message.reasoning_content}
             isStreaming={message._isStreaming || (isLoading && isLastMessage)}
@@ -1205,10 +1299,7 @@ const MessageBubble = memo(function MessageBubble({
           <ThinkingBlock content={thinking} />
         ) : null}
 
-        {/* 工具调用 */}
-        {message.toolCalls && message.toolCalls.length > 0 && <ToolCallBlock toolCalls={message.toolCalls} />}
-
-        {/* 主要内容 */}
+        {/* 主要内容（支持内联工具调用分段） */}
         <Box
           sx={{
             px: 0,
@@ -1216,9 +1307,36 @@ const MessageBubble = memo(function MessageBubble({
             wordBreak: 'break-word',
           }}
         >
-          {output ? (
-            <Box sx={{ fontSize: '0.9375rem' }}>
-              <MarkdownContent content={output} />
+          {message.segments ? (
+            /* 有序内容段渲染：推理、文本和工具调用内联交替 */
+            <Box sx={{ fontSize: '0.9375rem', '& > *': { display: 'inline' } }}>
+              {message.segments.map((seg, i) => {
+                if (seg.type === 'text' && seg.text?.startsWith('reasoning:')) {
+                  return (
+                    <Box key={i} sx={{ display: 'block', mb: 1 }}>
+                      <ReasoningBlock
+                        content={seg.text.slice(10)}
+                        isStreaming={message._isStreaming && i === message.segments!.length - 1}
+                      />
+                    </Box>
+                  );
+                }
+                if (seg.type === 'text') {
+                  return (
+                    <Box key={i} sx={{ display: 'inline' }}>
+                      <MarkdownContent content={seg.text || ''} />
+                    </Box>
+                  );
+                }
+                if (seg.toolCall) {
+                  return (
+                    <Box key={`tc-${i}`} sx={{ display: 'inline' }}>
+                      <ToolCallChip toolCall={seg.toolCall} isStreaming={message._isStreaming} />
+                    </Box>
+                  );
+                }
+                return null;
+              })}
               {message._isStreaming && (
                 <Box
                   component="span"
@@ -1248,36 +1366,80 @@ const MessageBubble = memo(function MessageBubble({
                 </Box>
               )}
             </Box>
-          ) : (isLoading || message._isStreaming) && isLastMessage ? (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Box
-                sx={{
-                  display: 'flex',
-                  gap: 0.5,
-                  '& span': {
-                    width: 6,
-                    height: 6,
-                    borderRadius: '50%',
-                    bgcolor: 'text.secondary',
-                    animation: 'pulse 1.4s infinite',
-                  },
-                  '& span:nth-of-type(2)': { animationDelay: '0.2s' },
-                  '& span:nth-of-type(3)': { animationDelay: '0.4s' },
-                  '@keyframes pulse': {
-                    '0%, 80%, 100%': { opacity: 0.3 },
-                    '40%': { opacity: 1 },
-                  },
-                }}
-              >
-                <span />
-                <span />
-                <span />
-              </Box>
-              <Typography variant="body2" color="text.secondary">
-                {t('chat.thinking')}
-              </Typography>
-            </Box>
-          ) : null}
+          ) : (
+            /* 向后兼容：旧格式消息 */
+            <>
+              {message.toolCalls && message.toolCalls.length > 0 && (
+                <Box sx={{ display: 'inline-flex', flexWrap: 'wrap', gap: 0.5, alignItems: 'center', mb: 0.5 }}>
+                  {message.toolCalls.map((tc, i) => (
+                    <ToolCallChip key={tc.id || i} toolCall={tc} />
+                  ))}
+                </Box>
+              )}
+              {output ? (
+                <Box sx={{ fontSize: '0.9375rem' }}>
+                  <MarkdownContent content={output} />
+                  {message._isStreaming && (
+                    <Box
+                      component="span"
+                      sx={{
+                        display: 'inline-flex',
+                        verticalAlign: 'middle',
+                        gap: 0.25,
+                        ml: 0.5,
+                        '& span': {
+                          width: 4,
+                          height: 4,
+                          borderRadius: '50%',
+                          bgcolor: 'text.disabled',
+                          animation: 'stream-dots 1.4s infinite',
+                        },
+                        '& span:nth-of-type(2)': { animationDelay: '0.2s' },
+                        '& span:nth-of-type(3)': { animationDelay: '0.4s' },
+                        '@keyframes stream-dots': {
+                          '0%, 80%, 100%': { opacity: 0.2, transform: 'translateY(0)' },
+                          '40%': { opacity: 1, transform: 'translateY(-2px)' },
+                        },
+                      }}
+                    >
+                      <span />
+                      <span />
+                      <span />
+                    </Box>
+                  )}
+                </Box>
+              ) : (isLoading || message._isStreaming) && isLastMessage ? (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      gap: 0.5,
+                      '& span': {
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        bgcolor: 'text.secondary',
+                        animation: 'pulse 1.4s infinite',
+                      },
+                      '& span:nth-of-type(2)': { animationDelay: '0.2s' },
+                      '& span:nth-of-type(3)': { animationDelay: '0.4s' },
+                      '@keyframes pulse': {
+                        '0%, 80%, 100%': { opacity: 0.3 },
+                        '40%': { opacity: 1 },
+                      },
+                    }}
+                  >
+                    <span />
+                    <span />
+                    <span />
+                  </Box>
+                  <Typography variant="body2" color="text.secondary">
+                    {t('chat.thinking')}
+                  </Typography>
+                </Box>
+              ) : null}
+            </>
+          )}
         </Box>
 
         {output && (
@@ -2132,13 +2294,18 @@ export function UserChatPage() {
         }
       }
 
-      const body = {
+      const body: Record<string, any> = {
         model: session.model,
         messages: messagesToSend,
         stream: session.stream,
         sessionId: currentSessionId,
         thinking: session.thinking || false,
       };
+      // 思考强度参数（仅当 thinking=true 时透传）
+      if (session.thinking) {
+        if (session.reasoningEffort) body.reasoningEffort = session.reasoningEffort;
+        if (session.thinkingBudgetTokens) body.thinkingBudgetTokens = session.thinkingBudgetTokens;
+      }
 
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -2162,7 +2329,22 @@ export function UserChatPage() {
         const decoder = new TextDecoder();
         let toolCalls: ToolCall[] = [];
 
+        let orderedSegments: ContentSegment[] = [];
+
+        const rebuildSegments = (): ContentSegment[] => {
+          const segs: ContentSegment[] = [];
+          const reasoning = reasoningContentRef.current;
+          const text = streamContentRef.current;
+          if (reasoning) segs.push({ type: 'text', text: `reasoning:${reasoning}` });
+          if (text) segs.push({ type: 'text', text });
+          for (const tc of toolCalls) {
+            if (tc.name) segs.push({ type: 'tool_call', toolCall: { ...tc } });
+          }
+          return segs;
+        };
+
         const updateContent = () => {
+          orderedSegments = rebuildSegments();
           setSessions((prev) =>
             prev.map((s) => {
               if (s.id === currentSessionId) {
@@ -2171,6 +2353,7 @@ export function UserChatPage() {
                 if (messages[lastIndex]) {
                   const msg: any = { ...messages[lastIndex] };
                   msg.content = streamContentRef.current;
+                  msg.segments = orderedSegments.length > 0 ? orderedSegments : undefined;
                   if (toolCalls.length > 0) {
                     msg.toolCalls = [...toolCalls];
                   }
@@ -2305,6 +2488,8 @@ export function UserChatPage() {
               if (messages[lastIndex]) {
                 const msg: any = { ...messages[lastIndex] };
                 msg.content = streamContentRef.current;
+                orderedSegments = rebuildSegments();
+                msg.segments = orderedSegments.length > 0 ? orderedSegments : undefined;
                 msg.toolCalls = toolCalls.length > 0 ? toolCalls : undefined;
                 msg.model = session.model;
                 if (reasoningContentRef.current) {
@@ -2354,6 +2539,13 @@ export function UserChatPage() {
             const lastIndex = messages.length - 1;
             const msg: any = { ...messages[lastIndex] };
             msg.content = assistantContent;
+            const nonStreamSegs: ContentSegment[] = [];
+            if (assistantMessage.reasoning_content) nonStreamSegs.push({ type: 'text', text: `reasoning:${assistantMessage.reasoning_content}` });
+            if (assistantContent) nonStreamSegs.push({ type: 'text', text: assistantContent });
+            for (const tcc of (msg.toolCalls || [])) {
+              if (tcc.name) nonStreamSegs.push({ type: 'tool_call', toolCall: { ...tcc } });
+            }
+            msg.segments = nonStreamSegs.length > 0 ? nonStreamSegs : undefined;
             msg.toolCalls = toolCalls;
             msg.model = session.model;
             msg.usage = data.usage;
@@ -3268,23 +3460,82 @@ export function UserChatPage() {
           />
         </Box>
 
-        {/* 思考模式（仅对支持 thinking 的模型显示） */}
+        {/* 思考模式（仅对配置了 thinkingModel 的模型显示） */}
         {(() => {
           const selectedModel = models.find(m => m.id === currentSession?.model);
-          const hasThinking = selectedModel?.supported_features?.includes('thinking');
+          const hasThinking = selectedModel?.thinkingModel === true;
+          const thinkingType = selectedModel?.thinkingModelType || '';
           return hasThinking ? (
-            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-              <Brain size={18} style={{ marginRight: 8 }} />
-              <Typography variant="body2" sx={{ flex: 1 }}>
-                {t('chat.thinking', '思考模式')}
-              </Typography>
-              <Switch
-                size="small"
-                checked={currentSession?.thinking ?? false}
-                onChange={(e) => updateCurrentThinking(e.target.checked)}
-                disabled={isReadOnly}
-              />
-            </Box>
+            <>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                <Brain size={18} style={{ marginRight: 8 }} />
+                <Typography variant="body2" sx={{ flex: 1 }}>
+                  {t('chat.thinking', '思考模式')}
+                </Typography>
+                <Switch
+                  size="small"
+                  checked={currentSession?.thinking ?? false}
+                  onChange={(e) => updateCurrentThinking(e.target.checked)}
+                  disabled={isReadOnly}
+                />
+              </Box>
+              {currentSession?.thinking && (
+                <Box sx={{ pl: 3.5, mb: 1.5 }}>
+                  {(thinkingType === 'openai' || thinkingType === 'deepseek') && (
+                    <FormControl fullWidth size="small">
+                      <InputLabel>{t('chat.thinkingEffort', '思考强度')}</InputLabel>
+                      <Select
+                        value={currentSession?.reasoningEffort || (thinkingType === 'deepseek' ? 'high' : 'medium')}
+                        label={t('chat.thinkingEffort', '思考强度')}
+                        onChange={(e) => {
+                          setSessions(prev => prev.map(s =>
+                            s.id === currentSessionId ? { ...s, reasoningEffort: e.target.value } : s
+                          ));
+                        }}
+                        disabled={isReadOnly}
+                      >
+                        {thinkingType === 'deepseek' ? (
+                          <>
+                            <MenuItem value="high">High (标准思考)</MenuItem>
+                            <MenuItem value="max">Max (极致思考)</MenuItem>
+                          </>
+                        ) : (
+                          <>
+                            <MenuItem value="low">Low (轻度)</MenuItem>
+                            <MenuItem value="medium">Medium (适中)</MenuItem>
+                            <MenuItem value="high">High (深度)</MenuItem>
+                          </>
+                        )}
+                      </Select>
+                    </FormControl>
+                  )}
+                  {thinkingType === 'claude' && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap', minWidth: 60 }}>
+                        {t('chat.thinkingBudget', '思考预算')}
+                      </Typography>
+                      <TextField
+                        type="number"
+                        size="small"
+                        value={currentSession?.thinkingBudgetTokens || 4096}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 1024;
+                          setSessions(prev => prev.map(s =>
+                            s.id === currentSessionId ? { ...s, thinkingBudgetTokens: Math.max(1024, val) } : s
+                          ));
+                        }}
+                        InputProps={{ inputProps: { min: 1024, max: 32000, step: 1024 } }}
+                        sx={{ width: 120 }}
+                        disabled={isReadOnly}
+                      />
+                      <Typography variant="caption" color="text.disabled">
+                        tokens
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
+              )}
+            </>
           ) : null;
         })()}
 
