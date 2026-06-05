@@ -1816,13 +1816,26 @@ export function UserChatPage() {
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id === currentSessionId) {
+            // 开启思考时，同步初始化强度/预算默认值
+            if (thinking) {
+              const selectedModel = models.find(m => m.id === s.model);
+              const modelType = selectedModel?.thinkingModelType || '';
+              const effortDefault = modelType === 'deepseek' ? 'high' : 'medium';
+              return {
+                ...s,
+                thinking: true,
+                reasoningEffort: (s.reasoningEffort || effortDefault) as any,
+                thinkingBudgetTokens: s.thinkingBudgetTokens || 4096,
+                updatedAt: Date.now(),
+              };
+            }
             return { ...s, thinking, updatedAt: Date.now() };
           }
           return s;
         })
       );
     },
-    [currentSessionId]
+    [currentSessionId, models]
   );
 
   // 快捷更新超时设置
