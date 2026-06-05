@@ -1838,6 +1838,28 @@ export function UserChatPage() {
     [currentSessionId, models]
   );
 
+  // 当 session 加载时（含从服务器加载的旧会话），初始化思考参数默认值
+  useEffect(() => {
+    if (!currentSession || !currentSession.thinking || !models.length) return;
+    const selectedModel = models.find(m => m.id === currentSession.model);
+    if (!selectedModel?.thinkingModel) return;
+    const modelType = selectedModel.thinkingModelType || '';
+    const needsInit = !currentSession.reasoningEffort || !currentSession.thinkingBudgetTokens;
+    if (!needsInit) return;
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id === currentSessionId && !s.reasoningEffort) {
+          return {
+            ...s,
+            reasoningEffort: (modelType === 'deepseek' ? 'high' : 'medium') as any,
+            thinkingBudgetTokens: s.thinkingBudgetTokens || 4096,
+          };
+        }
+        return s;
+      })
+    );
+  }, [currentSession?.id, currentSession?.thinking, models]);
+
   // 快捷更新超时设置
   const updateCurrentTimeout = useCallback(
     (timeout: number) => {

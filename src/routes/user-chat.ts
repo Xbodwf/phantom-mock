@@ -495,9 +495,13 @@ async function streamWithBuiltinTools(
         content: 'You have used many tool calls. Based on the information you have gathered so far, please provide a comprehensive answer to the user\'s original question now. Do not call additional tools.',
       });
     }
+    // DeepSeek 等模型在思考模式下，assistant 消息必须包含原始响应中的
+    // reasoning_content，否则返回 400: "The reasoning_content in the thinking
+    // mode must be passed back to the API"
     newMessages.push({
       role: 'assistant',
       content: null,
+      ...(currentReasoning ? { reasoning_content: currentReasoning } : {}),
       tool_calls: [{
         id: activeTc.id,
         type: 'function',
