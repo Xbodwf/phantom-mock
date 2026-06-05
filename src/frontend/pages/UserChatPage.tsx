@@ -2369,6 +2369,7 @@ export function UserChatPage() {
         let toolCalls: ToolCall[] = [];
         let contentEvents: ContentSegment[] = [];
         let contentEventHasToolCall = false;
+        let orderedSegments: ContentSegment[] = [];
         const rebuildSegments = (): ContentSegment[] => {
           // contentEvents 已在 streaming 中增量累积，保持原始次序
           // 只需同步 tool_call 段的实时状态
