@@ -2375,7 +2375,11 @@ export function UserChatPage() {
           // 只需同步 tool_call 段的实时状态
           const synced = contentEvents.map(seg => {
             if (seg.type === 'tool_call' && seg.toolCall) {
-              const live = toolCalls.find(tc => tc.id === seg.toolCall!.id || tc._idx === seg.toolCall!._idx);
+              // 优先按 id 匹配（id 跨轮次唯一），再按 _idx 兜底
+              // 避免新轮次 _idx=0 的调用错误匹配到上一轮同 _idx 的已完成调用
+              const live = seg.toolCall!.id
+                ? toolCalls.find(tc => tc.id === seg.toolCall!.id)
+                : toolCalls.find(tc => tc._idx === seg.toolCall!._idx);
               if (live) seg.toolCall = { ...live };
             }
             return seg;

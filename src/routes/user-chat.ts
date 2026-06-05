@@ -311,12 +311,16 @@ async function streamWithBuiltinTools(
 
                 if (delta.content || (delta as any).reasoning_content) {
                   if (delta.content) allContent += delta.content;
+                  // 只转发纯内容字段，不转发 tool_calls 等其他字段
+                  const contentDelta: any = {};
+                  if ((delta as any).reasoning_content) contentDelta.reasoning_content = (delta as any).reasoning_content;
+                  if (delta.content) contentDelta.content = delta.content;
                   res.write(`data: ${JSON.stringify({
                     id: requestId,
                     object: 'chat.completion.chunk',
                     created: Math.floor(Date.now() / 1000),
                     model: body.model,
-                    choices: [{ index: 0, delta, finish_reason: null }],
+                    choices: [{ index: 0, delta: contentDelta, finish_reason: null }],
                   })}\n\n`);
                 }
 
@@ -338,13 +342,13 @@ async function streamWithBuiltinTools(
                       buf.thought_signature = (tc as any).thought_signature;
                     }
                   }
-                  // 转发 tool_call 块给客户端（但不转发 finish_reason）
+                  // 只转发 tool_calls 字段，不转发 content 等其他字段
                   res.write(`data: ${JSON.stringify({
                     id: requestId,
                     object: 'chat.completion.chunk',
                     created: Math.floor(Date.now() / 1000),
                     model: body.model,
-                    choices: [{ index: 0, delta, finish_reason: null }],
+                    choices: [{ index: 0, delta: { tool_calls: delta.tool_calls }, finish_reason: null }],
                   })}\n\n`);
                 }
               } catch { /* skip parse error */ }
@@ -484,12 +488,13 @@ async function streamWithBuiltinTools(
     res.write(buildToolProgressChunk(requestId, body.model, activeTc.id, activeTc.name, 'completed', toolResult.content));
 
     // 检测 AI 是否连续多轮只调工具不输出文本
-    if (allContent.length > 0) lastTextRound = round;
+    // reasoning_content（思考过程）也算有效输出，防止思考模型过早被强制停止
+    if (allContent.length > 0 || currentReasoning.length > 0) lastTextRound = round;
 
     // 构建 follow-up 消息
     const newMessages = [...(currentBody.messages || [])];
-    if (round - lastTextRound >= 4 && round < maxRounds - 2) {
-      // 连续 5+ 轮无文本输出，提示 AI 总结
+    if (round - lastTextRound >= 20 && round < maxRounds - 2) {
+      // 连续 20+ 轮无有效输出才提示总结
       newMessages.push({
         role: 'system',
         content: 'You have used many tool calls. Based on the information you have gathered so far, please provide a comprehensive answer to the user\'s original question now. Do not call additional tools.',
