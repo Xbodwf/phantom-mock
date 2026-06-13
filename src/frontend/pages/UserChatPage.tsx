@@ -781,26 +781,41 @@ const TOOL_FRIENDLY_NAMES: Record<string, string> = {
   edit_file: '编辑文件',
 };
 
-function formatToolArgs(tool: ToolCall): string {
+function formatToolLine(tool: ToolCall): string {
+  let line = tool.name;
   try {
     const args = JSON.parse(tool.arguments);
-    if (tool.name === 'terminal') return args.command || '';
-    if (tool.name === 'web_search') return args.query || '';
-    if (tool.name === 'web_fetch') return args.url || '';
-    if (tool.name === 'file_read') return args.path || '';
-    if (tool.name === 'file_write') return args.path || '';
-    if (tool.name === 'file_list') return args.path || '/';
-    if (tool.name === 'edit_file') return `${args.path || ''} (${(args.operations || []).length} ops)`;
-    return tool.arguments;
+    if (tool.name === 'terminal') line += ` \`${args.command || ''}\``;
+    else if (tool.name === 'web_search') line += ` ${args.query || ''}`;
+    else if (tool.name === 'web_fetch') line += ` ${args.url || ''}`;
+    else if (tool.name === 'file_read') line += ` ${args.path || ''}`;
+    else if (tool.name === 'file_write') line += ` ${args.path || ''}`;
+    else if (tool.name === 'file_list') line += ` ${args.path || '/'}`;
+    else if (tool.name === 'edit_file') line += ` ${args.path || ''} (${(args.operations || []).length} ops)`;
+    else line += ` ${tool.arguments}`;
   } catch {
-    return tool.arguments;
+    line += ` ${tool.arguments}`;
   }
+  if (tool.result) {
+    const r = tool.result.length > 200 ? tool.result.substring(0, 200) + '…' : tool.result;
+    line += `\n  → ${r.replace(/\n/g, '\n  ')}`;
+  }
+  return line;
 }
 
 const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockProps) {
+  const { t = (key: string, defaultValue?: string) => defaultValue || key } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const anyExecuting = toolCalls.some(tc => tc.status === 'executing');
   const allDone = toolCalls.every(tc => tc.status === 'completed');
+
+  const label = anyExecuting
+    ? '工具调用中...'
+    : allDone
+    ? `已完成 ${toolCalls.length} 个工具`
+    : `${toolCalls.length} 个工具`;
+
+  const content = toolCalls.map(t => formatToolLine(t)).join('\n');
 
   return (
     <Box sx={{ mb: 1.5 }}>
@@ -831,59 +846,26 @@ const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockPr
           }}
         />
         <Typography variant="caption" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-          {anyExecuting ? '工具调用中...' : allDone ? `已完成 ${toolCalls.length} 个工具` : `${toolCalls.length} 个工具`}
+          {label}
         </Typography>
         {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
       </Box>
       <Collapse in={expanded}>
-        <Box sx={{ mt: 0.5, pl: 1.5, ml: 1, borderLeft: 2, borderColor: 'divider' }}>
-          {toolCalls.map((tool, index) => (
-            <Box
-              key={tool.id || index}
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 1,
-                py: 0.5,
-                fontSize: '0.8125rem',
-                color: 'text.secondary',
-                animation: `fadeInTool 0.3s ease ${index * 0.08}s both`,
-                '@keyframes fadeInTool': {
-                  from: { opacity: 0, transform: 'translateY(4px)' },
-                  to: { opacity: 1, transform: 'translateY(0)' },
-                },
-              }}
-            >
-              <Box sx={{ width: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                {tool.status === 'executing' ? (
-                  <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: '#3b82f6', animation: 'tool-dot 1.4s ease-in-out infinite' }} />
-                ) : tool.status === 'completed' ? (
-                  <Check size={10} style={{ color: '#22c55e' }} />
-                ) : (
-                  <Wrench size={10} />
-                )}
-              </Box>
-              <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '0.7rem', flexShrink: 0, color: 'text.secondary' }}>
-                {TOOL_FRIENDLY_NAMES[tool.name] || tool.name}
-              </Typography>
-              {formatToolArgs(tool) && (
-                <Typography
-                  variant="caption"
-                  component="span"
-                  sx={{
-                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-                    fontSize: '0.65rem',
-                    color: 'text.disabled',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {formatToolArgs(tool)}
-                </Typography>
-              )}
-            </Box>
-          ))}
+        <Box
+          sx={{
+            mt: 0.5,
+            pl: 1.5,
+            ml: 1,
+            borderLeft: 2,
+            borderColor: 'divider',
+            fontSize: '0.8125rem',
+            color: 'text.secondary',
+            lineHeight: 1.7,
+            whiteSpace: 'pre-wrap',
+            fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+          }}
+        >
+          {content}
           {anyExecuting && (
             <Box
               component="span"
@@ -893,8 +875,8 @@ const ToolCallBlock = memo(function ToolCallBlock({ toolCalls }: ToolCallBlockPr
                 height: 14,
                 verticalAlign: 'middle',
                 bgcolor: 'text.disabled',
-                animation: 'tool-cursor 0.8s step-end infinite',
-                '@keyframes tool-cursor': {
+                animation: 'reasoning-cursor 0.8s step-end infinite',
+                '@keyframes reasoning-cursor': {
                   '0%, 100%': { opacity: 1 },
                   '50%': { opacity: 0 },
                 },
@@ -2239,11 +2221,15 @@ export function UserChatPage() {
                     throttledUpdate();
                   }
 
-                  // 处理工具调用（按 index 聚合，因为流式块中 id 只出现在第一块）
+                  // 处理工具调用（按 index 聚合，流式块中 id 只出现在第一块）
                   if (delta?.tool_calls) {
                     for (const tc of delta.tool_calls) {
                       const idx = tc.index ?? toolCalls.length;
-                      const existing = toolCalls.find((t) => t._idx === idx);
+                      let existing = toolCalls.find((t) => t._idx === idx);
+                      // 跨轮次匹配：按 idx 没找到时，按名称匹配未完成的条目（follow-up 重新发出）
+                      if (!existing && tc.function?.name) {
+                        existing = toolCalls.find((t) => t.name === tc.function.name && !t.status);
+                      }
                       if (existing) {
                         if (tc.function?.arguments) {
                           existing.arguments += tc.function.arguments;
