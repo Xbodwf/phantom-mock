@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware.js';
 import { getChatSessionById, updateChatSession, FileNode } from '../db/chatSessions.js';
+import archiver from 'archiver';
 
 const router: Router = Router();
 router.use(authMiddleware);
@@ -479,6 +480,44 @@ router.post('/:id/files/upload-zip', async (req: AuthRequest, res: Response) => 
     await rm(tmpDir, { recursive: true, force: true });
 
     res.json({ fileTree });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 递归添加文件节点到 archiver
+function addToArchive(archive: archiver.Archiver, nodes: FileNode[], basePath: string = '') {
+  for (const node of nodes) {
+    const fullPath = basePath ? `${basePath}/${node.name}` : node.name;
+    if (node.type === 'directory') {
+      addToArchive(archive, node.children || [], fullPath);
+    } else {
+      archive.append(node.content || '', { name: fullPath });
+    }
+  }
+}
+
+// 下载整个项目为 ZIP
+router.post('/:id/files/download-zip', async (req: AuthRequest, res: Response) => {
+  try {
+    const session = await getChatSessionById(req.params.id as string);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    if (!session.fileTree || session.fileTree.length === 0) {
+      return res.status(400).json({ error: 'No files in workspace' });
+    }
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${session.title || 'workspace'}.zip"`);
+
+    archive.on('error', (err: Error) => {
+      res.status(500).json({ error: err.message });
+    });
+
+    archive.pipe(res);
+    addToArchive(archive, session.fileTree);
+    await archive.finalize();
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

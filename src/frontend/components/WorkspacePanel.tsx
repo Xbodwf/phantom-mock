@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Box, Divider, IconButton, Typography, Tooltip, Drawer, useMediaQuery, useTheme } from '@mui/material';
-import { PanelLeftClose, PanelLeft, Terminal, Code, Download } from 'lucide-react';
+import { PanelLeftClose, PanelLeft, Terminal, Code, Download, Archive } from 'lucide-react';
 import { FileExplorer } from './FileExplorer';
 import { CodeEditor } from './CodeEditor';
 import type { FileNode } from '../contexts/ChatContext';
@@ -187,6 +187,36 @@ export function WorkspacePanel({ fileTree, sessionId, onFileTreeChange }: Worksp
             </IconButton>
           </Tooltip>
         )}
+        <Tooltip title="Download all as ZIP">
+          <IconButton
+            size="small"
+            onClick={async () => {
+              try {
+                const token = localStorage.getItem('token');
+                const res = await fetch(`/api/session/${sessionId}/files/download-zip`, {
+                  method: 'POST',
+                  headers: token ? { Authorization: `Bearer ${token}` } : {},
+                });
+                if (!res.ok) {
+                  const err = await res.json().catch(() => ({}));
+                  console.error('Download ZIP failed:', err);
+                  return;
+                }
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'workspace.zip';
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch (e) {
+                console.error('Download ZIP error:', e);
+              }
+            }}
+          >
+            <Archive size={14} />
+          </IconButton>
+        </Tooltip>
         <IconButton size="small" onClick={handleRefresh} disabled={loading}>
           <Terminal size={14} />
         </IconButton>

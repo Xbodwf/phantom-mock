@@ -572,37 +572,38 @@ export async function forwardStreamRequest(
   // 使用转发模型名称
   const forwardBody = { ...body, model: forwardModel };
 
-  // 检查并修复工具调用中的 thought_signature（与 forwardToOpenAI 相同）
+  // 透传工具调用中的 thought_signature（不注入空值）
+  // Gemini 3 系列模型会验证 thought_signature，空值会导致 "Corrupted thought signature" 错误
   if (forwardBody.tools || forwardBody.functions) {
-    console.log('[Forwarder] 流式请求检测到工具调用，确保 thought_signature 存在');
-    
-    // 处理 tools 数组
+    const hasThoughtSig = (obj: any) => obj && typeof obj.thought_signature === 'string' && obj.thought_signature.length > 0;
+
+    // 处理 tools 数组：只保留已有的有效 thought_signature，不注入空值
     if (forwardBody.tools && Array.isArray(forwardBody.tools)) {
       forwardBody.tools = forwardBody.tools.map((tool: any) => {
         if (tool.type === 'function' && tool.function) {
-          // 确保 function 对象有 thought_signature
-          if (!tool.function.thought_signature) {
-            tool.function.thought_signature = '';
+          // 如果已有有效的 thought_signature 则保留，否则移除该字段
+          if (!hasThoughtSig(tool.function)) {
+            delete tool.function.thought_signature;
           }
         }
         return tool;
       });
     }
-    
-    // 处理 functions 数组（旧版格��）
+
+    // 处理 functions 数组（旧版格式）
     if (forwardBody.functions && Array.isArray(forwardBody.functions)) {
       forwardBody.functions = forwardBody.functions.map((func: any) => {
-        if (!func.thought_signature) {
-          func.thought_signature = '';
+        if (!hasThoughtSig(func)) {
+          delete func.thought_signature;
         }
         return func;
       });
     }
-    
+
     // 处理 tool_choice
     if (forwardBody.tool_choice && typeof forwardBody.tool_choice === 'object') {
-      if (!forwardBody.tool_choice.thought_signature) {
-        forwardBody.tool_choice.thought_signature = '';
+      if (!hasThoughtSig(forwardBody.tool_choice)) {
+        delete forwardBody.tool_choice.thought_signature;
       }
     }
   }
@@ -711,38 +712,37 @@ async function forwardToOpenAI(
   // 使用转发模型名称
   const forwardBody = { ...body, model: forwardModel };
 
-  // 检查并修复工具调用中的 thought_signature
-  // 某些 OpenAI 兼容的 API 需要这个字段
+  // 透传工具调用中的 thought_signature（不注入空值）
+  // Gemini 3 系列模型会验证 thought_signature，空值会导致 "Corrupted thought signature" 错误
   if (forwardBody.tools || forwardBody.functions) {
-    console.log('[Forwarder] 检测到工具调用，确保 thought_signature 存在');
-    
-    // 处理 tools 数组
+    const hasThoughtSig = (obj: any) => obj && typeof obj.thought_signature === 'string' && obj.thought_signature.length > 0;
+
+    // 处理 tools 数组：只保留已有的有效 thought_signature，不注入空值
     if (forwardBody.tools && Array.isArray(forwardBody.tools)) {
       forwardBody.tools = forwardBody.tools.map((tool: any) => {
         if (tool.type === 'function' && tool.function) {
-          // 确保 function 对象有 thought_signature
-          if (!tool.function.thought_signature) {
-            tool.function.thought_signature = '';
+          if (!hasThoughtSig(tool.function)) {
+            delete tool.function.thought_signature;
           }
         }
         return tool;
       });
     }
-    
+
     // 处理 functions 数组（旧版格式）
     if (forwardBody.functions && Array.isArray(forwardBody.functions)) {
       forwardBody.functions = forwardBody.functions.map((func: any) => {
-        if (!func.thought_signature) {
-          func.thought_signature = '';
+        if (!hasThoughtSig(func)) {
+          delete func.thought_signature;
         }
         return func;
       });
     }
-    
+
     // 处理 tool_choice
     if (forwardBody.tool_choice && typeof forwardBody.tool_choice === 'object') {
-      if (!forwardBody.tool_choice.thought_signature) {
-        forwardBody.tool_choice.thought_signature = '';
+      if (!hasThoughtSig(forwardBody.tool_choice)) {
+        delete forwardBody.tool_choice.thought_signature;
       }
     }
   }

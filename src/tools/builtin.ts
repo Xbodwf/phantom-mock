@@ -2,7 +2,7 @@ import { parse } from 'node-html-parser';
 import { getChatSessionById, updateChatSession, FileNode } from '../db/chatSessions.js';
 import { executeBashWasm } from './bash-wasm.js';
 
-export const BUILTIN_TOOL_NAMES = new Set(['web_fetch', 'web_search', 'file_read', 'file_write', 'file_list', 'edit_file']);
+export const BUILTIN_TOOL_NAMES = new Set(['web_fetch', 'web_search', 'file_read', 'file_write', 'file_list', 'edit_file', 'github_repo']);
 
 export function hasBuiltinTools(tools: any[]): boolean {
   if (!tools) return false;
@@ -166,6 +166,31 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
           },
         },
         required: ['path', 'operations'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_repo',
+      description: 'Browse a GitHub repository: list directory contents or read a file. Given a repo in owner/repo format, a branch, and a path, this tool returns directory listings or file contents from the GitHub API. Use this when you need to explore reference implementations or read source code from GitHub.',
+      parameters: {
+        type: 'object',
+        properties: {
+          repo: {
+            type: 'string',
+            description: 'Repository in owner/repo format, e.g. "modlist-org/KeyViewer"',
+          },
+          path: {
+            type: 'string',
+            description: 'Path within the repo (e.g. "src" or "src/Main.cs"). Leave empty or "/" to list root.',
+          },
+          ref: {
+            type: 'string',
+            description: 'Branch name, tag, or commit SHA (default: main)',
+          },
+        },
+        required: ['repo'],
       },
     },
   },
@@ -373,6 +398,55 @@ async function executeEditFile(args: { path: string; operations: Array<{ op: str
   return `Edited ${args.path}: ${appliedOps.join('; ')}`;
 }
 
+async function executeGithubRepo(args: { repo: string; path?: string; ref?: string }): Promise<string> {
+  try {
+    const { default: axios } = await import('axios');
+    const apiPath = args.path ? `/${args.path.replace(/^\//, '')}` : '';
+    const ref = args.ref || 'main';
+    const url = `https://api.github.com/repos/${args.repo}/contents${apiPath}?ref=${ref}`;
+
+    const response = await axios.get(url, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'PhantomMock/1.0',
+        'Accept': 'application/vnd.github.v3+json',
+      },
+      validateStatus: (status) => true,
+    });
+
+    if (response.status === 404) {
+      return `Error: Path "${args.path || '/'}" not found in ${args.repo}@${ref}`;
+    }
+    if (response.status === 403) {
+      return `Error: GitHub API rate limit exceeded. Try again later.`;
+    }
+    if (response.status !== 200) {
+      return `Error: GitHub API returned ${response.status}`;
+    }
+
+    const data = response.data;
+
+    // Directory listing
+    if (Array.isArray(data)) {
+      const lines = data.map((item: any) => {
+        const type = item.type === 'dir' ? '📁' : '📄';
+        return `${type} ${item.name}${item.type === 'dir' ? '/' : ''}`;
+      });
+      return lines.join('\n');
+    }
+
+    // Single file
+    if (data.type === 'file') {
+      const content = Buffer.from(data.content, 'base64').toString('utf-8');
+      return `--- ${data.path} (${data.size} bytes) ---\n${content}`;
+    }
+
+    return `Error: Unexpected response from GitHub API`;
+  } catch (e: any) {
+    return `Error accessing GitHub repo: ${e.message}`;
+  }
+}
+
 // ---- 主入口 ----
 
 export async function executeBuiltinTool(
@@ -408,6 +482,9 @@ export async function executeBuiltinTool(
       break;
     case 'edit_file':
       result = await executeEditFile(args, sessionId);
+      break;
+    case 'github_repo':
+      result = await executeGithubRepo(args);
       break;
     default:
       result = `Unknown tool: ${toolCall.name}`;

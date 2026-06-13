@@ -4,7 +4,7 @@ import { buildResponse, buildStreamChunk, buildStreamDone, generateRequestId } f
 import { addPendingRequest, removePendingRequest, type PendingRequest } from '../requestStore.js';
 import { broadcastRequest, getConnectedClientsCount } from '../websocket.js';
 import { hasReverseClients, broadcastRequestToReverseClients } from '../reverseWebSocket.js';
-import { getModel, getUserById, updateUser, createUsageRecord, getAllModels, getNodeById, selectProviderKeyRoundRobin, getProviderById } from '../storage.js';
+import { getModel, getUserById, updateUser, createUsageRecord, getAllModels, getNodeById, selectProviderKeyRoundRobin, getProviderById, getSettings } from '../storage.js';
 import { calculateCost, calculateTokens } from '../billing.js';
 import { forwardChatRequest, forwardStreamRequest, isModelForwardingConfigured, shouldUseNodeForwarding, hideKey, resolveForwardUrl, getForwardModelName, getEffectiveApiKey, mergeHeaders, forwardImageRequest } from '../forwarder.js';
 import { sendRequestToNode, isNodeConnected } from '../reverseWebSocket.js';
@@ -205,6 +205,10 @@ async function streamWithBuiltinTools(
 
   console.log('[streamWithBuiltinTools] Starting, model:', body.model, 'forwardModel:', getForwardModelName(runtimeModel, body.model));
 
+  // 使用可配置的超时时间（从 settings 读取，默认 1000 秒）
+  const settings = await getSettings();
+  const agentTimeoutMs = (settings.forwarderTimeout ?? 1000) * 1000;
+
   let allContent = '';
   const forwardModel = getForwardModelName(runtimeModel, body.model);
   let currentBody = { ...body, stream: true, model: forwardModel };
@@ -223,8 +227,8 @@ async function streamWithBuiltinTools(
   }
   currentBody.messages = messages;
 
-  const maxRounds = 15;
-  let lastTextRound = -1;
+  const maxRounds = 30;
+  let lastTextRound = 0;
 
   for (let round = 0; round < maxRounds; round++) {
     console.log('[streamWithBuiltinTools] Round', round, 'messages count:', currentBody.messages?.length);
@@ -237,7 +241,7 @@ async function streamWithBuiltinTools(
     console.log('[streamWithBuiltinTools] URL:', url, 'Key:', apiKey.slice(0, 8) + '...');
 
     // 收集本轮工具调用（keyed by index）
-    const toolCallBuffers = new Map<number, { id: string; name: string; args: string; extra?: any }>();
+    const toolCallBuffers = new Map<number, { id: string; name: string; args: string; extra?: any; thought_signature?: string }>();
     let currentReasoning = '';
     let finishReason: string | null = null;
 
@@ -248,7 +252,7 @@ async function streamWithBuiltinTools(
         // 流式请求
         const axiosResp = await axios.post(url, currentBody, {
           headers,
-          timeout: 120000,
+          timeout: agentTimeoutMs,
           responseType: 'stream',
           validateStatus: (status) => true,
         });
@@ -307,12 +311,16 @@ async function streamWithBuiltinTools(
 
                 if (delta.content || (delta as any).reasoning_content) {
                   if (delta.content) allContent += delta.content;
+                  // 只转发纯内容字段，不转发 tool_calls 等其他字段
+                  const contentDelta: any = {};
+                  if ((delta as any).reasoning_content) contentDelta.reasoning_content = (delta as any).reasoning_content;
+                  if (delta.content) contentDelta.content = delta.content;
                   res.write(`data: ${JSON.stringify({
                     id: requestId,
                     object: 'chat.completion.chunk',
                     created: Math.floor(Date.now() / 1000),
                     model: body.model,
-                    choices: [{ index: 0, delta, finish_reason: null }],
+                    choices: [{ index: 0, delta: contentDelta, finish_reason: null }],
                   })}\n\n`);
                 }
 
@@ -327,14 +335,20 @@ async function streamWithBuiltinTools(
                     if (tc.id) buf.id = tc.id;
                     if (tc.function?.name) buf.name = tc.function.name;
                     if (tc.function?.arguments) buf.args += tc.function.arguments;
+                    // 透传 thought_signature（Gemini 3 系列模型需要有效的 thought_signature）
+                    if (tc.function?.thought_signature) {
+                      buf.thought_signature = tc.function.thought_signature;
+                    } else if ((tc as any).thought_signature) {
+                      buf.thought_signature = (tc as any).thought_signature;
+                    }
                   }
-                  // 转发 tool_call 块给客户端（但不转发 finish_reason）
+                  // 只转发 tool_calls 字段，不转发 content 等其他字段
                   res.write(`data: ${JSON.stringify({
                     id: requestId,
                     object: 'chat.completion.chunk',
                     created: Math.floor(Date.now() / 1000),
                     model: body.model,
-                    choices: [{ index: 0, delta, finish_reason: null }],
+                    choices: [{ index: 0, delta: { tool_calls: delta.tool_calls }, finish_reason: null }],
                   })}\n\n`);
                 }
               } catch { /* skip parse error */ }
@@ -355,7 +369,7 @@ async function streamWithBuiltinTools(
         // 非流式 follow-up 请求
         const axiosResp = await axios.post(url, currentBody, {
           headers,
-          timeout: 120000,
+          timeout: agentTimeoutMs,
           validateStatus: (status) => true,
         });
 
@@ -398,11 +412,13 @@ async function streamWithBuiltinTools(
       if (msg.tool_calls) {
         console.log('[streamWithBuiltinTools] Tool calls in non-stream response:', msg.tool_calls.length);
         for (const tc of msg.tool_calls) {
+          const thoughtSig = tc.function?.thought_signature || (tc as any).thought_signature;
           toolCallBuffers.set(tc.index || 0, {
             id: tc.id || '',
             name: tc.function?.name || '',
             args: tc.function?.arguments || '',
             extra: (tc as any).extra_content,
+            thought_signature: thoughtSig || undefined,
           });
         }
         // 转发 tool_call 给客户端
@@ -472,24 +488,33 @@ async function streamWithBuiltinTools(
     res.write(buildToolProgressChunk(requestId, body.model, activeTc.id, activeTc.name, 'completed', toolResult.content));
 
     // 检测 AI 是否连续多轮只调工具不输出文本
-    if (allContent.length > 0) lastTextRound = round;
+    // reasoning_content（思考过程）也算有效输出，防止思考模型过早被强制停止
+    if (allContent.length > 0 || currentReasoning.length > 0) lastTextRound = round;
 
     // 构建 follow-up 消息
     const newMessages = [...(currentBody.messages || [])];
-    if (round - lastTextRound >= 2 && round < maxRounds - 2) {
-      // 连续 4+ 轮无文本输出，提示 AI 总结
+    if (round - lastTextRound >= 20 && round < maxRounds - 2) {
+      // 连续 20+ 轮无有效输出才提示总结
       newMessages.push({
         role: 'system',
         content: 'You have used many tool calls. Based on the information you have gathered so far, please provide a comprehensive answer to the user\'s original question now. Do not call additional tools.',
       });
     }
+    // DeepSeek 等模型在思考模式下，assistant 消息必须包含原始响应中的
+    // reasoning_content，否则返回 400: "The reasoning_content in the thinking
+    // mode must be passed back to the API"
     newMessages.push({
       role: 'assistant',
       content: null,
+      ...(currentReasoning ? { reasoning_content: currentReasoning } : {}),
       tool_calls: [{
         id: activeTc.id,
         type: 'function',
-        function: { name: activeTc.name, arguments: activeTc.args },
+        function: {
+          name: activeTc.name,
+          arguments: activeTc.args,
+          ...(activeTc.thought_signature ? { thought_signature: activeTc.thought_signature } : {}),
+        },
         ...(activeTc.extra ? { extra_content: activeTc.extra } : {}),
       }],
     });
@@ -909,17 +934,63 @@ async function handleUserChatRequest(
   }
 
   // 思考模式：通过 body.thinking 控制是否启用思考（仅对非节点转发生效）
+  // 根据模型配置的 thinkingModelType 决定注入的参数
+  //   - openai:  reasoning_effort (low/medium/high) + max_completion_tokens
+  //   - deepseek: reasoning_effort (high/max)
+  //   - claude:   thinking.type + thinking.budget_tokens
+  //   - gemini:   thinking_config
+  //   - 其他:     thinking_mode header（通用代理兼容）
   if (body.thinking && runtimeModel.forwardingMode !== 'node') {
-    runtimeModel = {
-      ...runtimeModel,
-      defaultHeaders: {
-        ...(runtimeModel.defaultHeaders || {}),
-        'thinking_mode': 'true',
-      },
-    };
+    const thinkingType = (runtimeModel as any).thinkingModelType || '';
+    const effort = (body as any).reasoningEffort || 'high';
+    switch (thinkingType) {
+      case 'openai':
+        // OpenAI o1/o3: reasoning_effort (low/medium/high), max_completion_tokens
+        (body as any).reasoning_effort = effort;
+        // o1/o3 使用 max_completion_tokens 而非 max_tokens
+        if ((body as any).max_tokens !== undefined) {
+          (body as any).max_completion_tokens = (body as any).max_tokens;
+          delete (body as any).max_tokens;
+        }
+        break;
+      case 'deepseek':
+        // DeepSeek V4: reasoning_effort (high/max)
+        (body as any).reasoning_effort = (effort === 'max' || effort === 'high') ? effort : 'high';
+        // DeepSeek V4 也支持 extra_body.thinking.type
+        // 保持 max_tokens 不变（V4 仍使用 max_tokens）
+        break;
+      case 'claude':
+        // Anthropic Claude: thinking block with budget_tokens
+        const budgetTokens = (body as any).thinkingBudgetTokens || 4096;
+        (body as any).thinking = { type: 'enabled', budget_tokens: budgetTokens };
+        // max_tokens 必须大于 budget_tokens
+        if (!(body as any).max_tokens || (body as any).max_tokens <= budgetTokens) {
+          (body as any).max_tokens = budgetTokens + 2048;
+        }
+        break;
+      case 'gemini':
+        // Gemini: thinking_config
+        (body as any).thinking_config = { type: 'ENABLED' };
+        break;
+      default:
+        // 未设置 thinkingModelType 或未知类型：回退到通用代理模式
+        // 尝试 reasoning_effort（对 OpenAI 兼容代理有效）
+        (body as any).reasoning_effort = 'high';
+        // 同时添加 thinking_mode header（对中转代理有效）
+        runtimeModel = {
+          ...runtimeModel,
+          defaultHeaders: {
+            ...(runtimeModel.defaultHeaders || {}),
+            'thinking_mode': 'true',
+          },
+        };
+        break;
+    }
   }
-  // Strip thinking from body — upstream proxies expect an object, not a boolean
-  delete body.thinking;
+  // 清理前端透传的临时字段
+  delete (body as any).thinking;
+  delete (body as any).reasoningEffort;
+  delete (body as any).thinkingBudgetTokens;
 
   const hasForwarding = isModelForwardingConfigured(runtimeModel);
 

@@ -193,6 +193,8 @@ export interface Model {
   supported_features?: string[]; // 支持的特性，如 ['chat', 'vision', 'function_calling']
   require_api_key?: boolean; // 是否需要API Key才能访问（默认true）
   allowManualReply?: boolean; // 是否允许人工回复（允许的模型才会在请求列表中显示）
+  thinkingModel?: boolean; // 是否启用思考模式
+  thinkingModelType?: 'openai' | 'deepseek' | 'gemini' | 'claude'; // 思考模型类型
  forwardingMode?: 'provider' | 'node' | 'none'; // 转发模式
  providerId?: string; //关联提供商ID
  nodeId?: string; //关联节点ID
