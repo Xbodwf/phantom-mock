@@ -373,17 +373,18 @@ export function sendRequestToNode(nodeId: string, req: PendingRequest): boolean 
   }
 
   // 构建请求消息，与 websocket.ts 格式保持一致
-  // 根据请求类型确定路径
+  // 根据请求类型确定路径（缺省为 chat）
+  const requestType = req.requestType || 'chat';
   let path = '/v1/chat/completions';
   let data: any = req.request;
   
-  if (req.requestType === 'embedding') {
+  if (requestType === 'embedding') {
     path = '/v1/embeddings';
     data = req.requestParams || req.request;
-  } else if (req.requestType === 'image' && req.imageRequest) {
+  } else if (requestType === 'image' && req.imageRequest) {
     path = '/v1/images/generations';
     data = req.imageRequest;
-  } else if (req.requestType === 'video' && req.videoRequest) {
+  } else if (requestType === 'video' && req.videoRequest) {
     path = '/v1/videos/generations';
     data = req.videoRequest;
   }

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import type { Model, PendingRequest } from '../../types.js';
-import { getModel, selectProviderKeyRoundRobin, getProviderById, getNodeById } from '../../storage.js';
+import { getModel, selectProviderKeyRoundRobin, getProviderById, getNodeById, selectNodeForModel } from '../../storage.js';
 import { generateRequestId } from '../../responseBuilder.js';
 import { isModelForwardingConfigured, shouldUseNodeForwarding } from '../../forwarder.js';
 import { transmuxEmbeddingForward } from '../../transmux/connect.js';
@@ -48,14 +48,22 @@ router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response)
  }
 
  // 检查是否应该通过节点转发
- if (shouldUseNodeForwarding(model)) {
- const node = getNodeById(model.nodeId!);
- console.log('[Embeddings] Using node forwarding, node:', model.nodeId);
+ if (shouldUseNodeForwarding(model) || (model.forwardingMode === 'node' && model.nodeGroupId)) {
+ // 优先节点组调度，其次单节点
+ let activeNodeId = '';
+ if (model.nodeGroupId) {
+ const selected = selectNodeForModel(model);
+ if (selected) activeNodeId = selected.id;
+ } else {
+ activeNodeId = model.nodeId || '';
+ }
+ const node = getNodeById(activeNodeId);
+ console.log('[Embeddings] Using node forwarding, node:', activeNodeId);
 
- if (!isNodeConnected(model.nodeId!)) {
+ if (!activeNodeId || !node || !isNodeConnected(activeNodeId)) {
  return res.status(503).json({
  error: {
- message: `Node ${model.nodeId} is not connected`,
+ message: `Node ${activeNodeId || model.nodeId} is not connected`,
  type: 'node_error',
  code: 'node_offline',
  }
@@ -88,7 +96,7 @@ router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response)
  });
 
  addPendingRequest(pending);
- sendRequestToNode(model.nodeId!, pending);
+ sendRequestToNode(activeNodeId, pending);
 
  const timeout = setTimeout(() => {
  removePendingRequest(requestId);

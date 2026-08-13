@@ -374,6 +374,7 @@ async function handleGeminiRequest(
         isStream: false,
         createdAt: Date.now(),
         resolve: () => {},
+        requestType: 'chat',
       };
 
       let userResponded = false;
@@ -473,6 +474,7 @@ async function handleGeminiRequest(
       isStream: true,
       createdAt: Date.now(),
       resolve: () => {},
+      requestType: 'chat',
   streamController: {
   enqueue: (content: string) => {
   if (!streamEnded) {
@@ -525,6 +527,7 @@ async function handleGeminiRequest(
       isStream: false,
       createdAt: Date.now(),
       resolve: () => {},
+      requestType: 'chat',
     };
 
     const responsePromise = new Promise<string>((resolve) => {

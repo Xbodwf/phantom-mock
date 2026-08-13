@@ -102,6 +102,18 @@ export interface NodeTokenResponse {
  token: string;
 }
 
+export interface NodeGroup {
+ id: string;
+ name: string;
+ description?: string;
+ schedule: 'round-robin' | 'random' | 'priority';
+ nodeIds: string[];
+ priorities?: Record<string, number>;
+ enabled: boolean;
+ createdAt: number;
+ updatedAt: number;
+}
+
 export interface Model {
   id: string;
   object: 'model';
@@ -157,6 +169,7 @@ export interface Model {
   forwardingMode?: 'provider' | 'node' | 'none'; // 转发模式
   providerId?: string;            // 关联提供商ID
   nodeId?: string;                // 关联节点ID
+  nodeGroupId?: string;           // 关联节点组ID（节点组调度优先）
   api_type?: 'openai' | 'anthropic' | 'google' | 'azure' | 'custom';
   api_url_path?: string;          // 相对路径，如 /v1/chat/completions
   api_url_path_2?: string;        // 第二相对路径：图片编辑(openai) / 流式转发(gemini)

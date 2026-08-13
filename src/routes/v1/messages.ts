@@ -235,6 +235,7 @@ router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response)
  createdAt: Date.now(),
  resolve: () => {},
  requestParams,
+ requestType: 'chat',
   streamController: {
   enqueue: (content: string) => {
   if (!streamEnded) {
@@ -286,6 +287,7 @@ router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response)
  createdAt: Date.now(),
  resolve: () => {},
  requestParams,
+ requestType: 'chat',
  };
 
  const responsePromise = new Promise<string>((resolve) => {

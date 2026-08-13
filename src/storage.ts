@@ -1,5 +1,5 @@
 import { join } from 'path';
-import type { Model, ApiKey, User, UsageRecord, Invoice, Action, Workflow, WorkflowRun, InvitationRecord, Notification, Provider, Node, ProviderApiKey } from './types.js';
+import type { Model, ApiKey, User, UsageRecord, Invoice, Action, Workflow, WorkflowRun, InvitationRecord, Notification, Provider, Node, NodeGroup, ProviderApiKey } from './types.js';
 import { randomBytes } from 'crypto';
 import { connectDB, getDB, initializeIndexes } from './db/index.js';
 import * as modelsDB from './db/models.js';
@@ -12,6 +12,7 @@ import * as notificationsDB from './db/notifications.js';
 import * as invitationsDB from './db/invitations.js';
 import * as providersDB from './db/providers.js';
 import * as nodesDB from './db/nodes.js';
+import * as nodeGroupsDB from './db/nodeGroups.js';
 
 const DATA_DIR = join(process.cwd(), 'data');
 const CONFIG_FILE = join(DATA_DIR, 'config.json');
@@ -26,6 +27,7 @@ let actionsCache: Action[] = [];
 let notificationsCache: Notification[] = [];
 let providersCache: Provider[] = [];
 let nodesCache: Node[] = [];
+let nodeGroupsCache: NodeGroup[] = [];
 
 export interface ServerConfig {
   port: number;
@@ -785,6 +787,107 @@ export async function markNodeOffline(id: string): Promise<void> {
  }
 }
 
+// ==================== 节点组管理 ====================
+
+export async function loadNodeGroups(): Promise<NodeGroup[]> {
+ try {
+ nodeGroupsCache = await nodeGroupsDB.getAllNodeGroups();
+ return nodeGroupsCache;
+ } catch (e) {
+ console.error('[Storage] Failed to load node groups:', e);
+ return [];
+ }
+}
+
+export function getAllNodeGroups(): NodeGroup[] {
+ return nodeGroupsCache;
+}
+
+export function getNodeGroupById(id: string): NodeGroup | undefined {
+ return nodeGroupsCache.find(g => g.id === id);
+}
+
+export async function createNodeGroup(group: Omit<NodeGroup, 'id' | 'createdAt' | 'updatedAt'>): Promise<NodeGroup> {
+ const created = await nodeGroupsDB.createNodeGroup(group);
+ nodeGroupsCache.push(created);
+ return created;
+}
+
+export async function updateNodeGroup(id: string, updates: Partial<NodeGroup>): Promise<NodeGroup | null> {
+ const updated = await nodeGroupsDB.updateNodeGroupById(id, updates);
+ if (updated) {
+ const index = nodeGroupsCache.findIndex(g => g.id === id);
+ if (index !== -1) nodeGroupsCache[index] = updated;
+ }
+ return updated;
+}
+
+export async function deleteNodeGroup(id: string): Promise<boolean> {
+ const deleted = await nodeGroupsDB.deleteNodeGroupById(id);
+ if (deleted) {
+ nodeGroupsCache = nodeGroupsCache.filter(g => g.id !== id);
+ // 解除模型对已删除组的引用
+ modelsCache = modelsCache.map(m => m.nodeGroupId === id ? { ...m, nodeGroupId: undefined } : m);
+ }
+ return deleted;
+}
+
+// ==================== 节点组调度 ====================
+
+let groupRRCursor: Record<string, number> = {};
+
+/**
+ * 从节点组中选择一个在线节点
+ * 调度策略：round-robin 轮换 / random 随机 / priority 按优先级
+ */
+export function selectNodeFromGroup(group: NodeGroup): Node | null {
+ if (!group.enabled || !group.nodeIds || group.nodeIds.length === 0) return null;
+
+ const onlineNodes = group.nodeIds
+ .map(id => getNodeById(id))
+ .filter((n): n is Node => !!n && n.enabled && n.status === 'online');
+
+ if (onlineNodes.length === 0) return null;
+
+ switch (group.schedule) {
+ case 'random': {
+ const idx = Math.floor(Math.random() * onlineNodes.length);
+ return onlineNodes[idx];
+ }
+ case 'priority': {
+ const sorted = [...onlineNodes].sort((a, b) => {
+ const pa = group.priorities?.[a.id] ?? 0;
+ const pb = group.priorities?.[b.id] ?? 0;
+ return pb - pa;
+ });
+ return sorted[0];
+ }
+ case 'round-robin':
+ default: {
+ const cursor = groupRRCursor[group.id] || 0;
+ const selected = onlineNodes[cursor % onlineNodes.length];
+ groupRRCursor[group.id] = cursor + 1;
+ return selected;
+ }
+ }
+}
+
+/** 兼容入口：根据模型配置选择转发节点（优先节点组，其次单节点） */
+export function selectNodeForModel(model: Model): Node | null {
+ if (model.nodeGroupId) {
+ const group = getNodeGroupById(model.nodeGroupId);
+ if (group) {
+ const node = selectNodeFromGroup(group);
+ if (node) return node;
+ }
+ }
+ if (model.nodeId) {
+ const node = getNodeById(model.nodeId);
+ return node && node.enabled && node.status === 'online' ? node : null;
+ }
+ return null;
+}
+
 // ==================== 提供商管理 ====================
 
 export async function loadProviders(): Promise<Provider[]> {
@@ -967,5 +1070,6 @@ export async function reloadAllCaches(): Promise<void> {
   await loadNotifications();
   await loadProviders();
   await loadNodes();
+  await loadNodeGroups();
   console.log('[Storage] All caches reloaded successfully');
 }

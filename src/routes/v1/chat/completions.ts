@@ -16,6 +16,8 @@ import {
  selectProviderKeyRoundRobin,
  getProviderById,
  getNodeById,
+ getNodeGroupById,
+ selectNodeFromGroup,
  getUserByUid,
  getSettings,
 } from '../../../storage.js';
@@ -444,16 +446,47 @@ async function handleChatRequest(
  }
 
  if (model.forwardingMode === 'node') {
- if (!model.nodeId) {
+ // 节点组模式：从组内调度选择一个在线节点
+ let activeNodeId: string | undefined;
+
+ if (model.nodeGroupId) {
+ const group = getNodeGroupById(model.nodeGroupId);
+ if (!group) {
  return res.status(400).json({
  error: {
- message: `Model '${body.model}' forwardingMode=node but nodeId is missing`,
+ message: `Node group '${model.nodeGroupId}' not found`,
  type: 'invalid_request_error',
- code: 'node_not_configured',
+ code: 'node_group_not_found',
  },
  });
  }
-
+ if (!group.enabled) {
+ return res.status(400).json({
+ error: {
+ message: `Node group '${group.name}' is disabled`,
+ type: 'invalid_request_error',
+ code: 'node_group_disabled',
+ },
+ });
+ }
+ const selected = selectNodeFromGroup(group);
+ if (!selected) {
+ const allowManualReply = model.allowManualReply !== false;
+ if (allowManualReply) {
+ console.log('[Forwarder] 节点组无在线节点，允许人工回复');
+ } else {
+ return res.status(502).json({
+ error: {
+ message: `No online node available in group '${group.name}'`,
+ type: 'forwarding_error',
+ code: 'node_group_no_online',
+ },
+ });
+ }
+ }
+ activeNodeId = selected?.id;
+ } else if (model.nodeId) {
+ activeNodeId = model.nodeId;
  const node = getNodeById(model.nodeId);
  if (!node || !node.enabled) {
  return res.status(400).json({
@@ -479,8 +512,19 @@ async function handleChatRequest(
  }
  }
 
- // 节点模式：通过 WebSocket 转发，不使用 HTTP 转发
- const isNodeMode = model.forwardingMode === 'node' && model.nodeId && isNodeConnected(model.nodeId);
+  // 将选中的节点写回运行时模型，供后续 sendRequestToNode 使用
+  if (activeNodeId) {
+  (req as any).activeNodeId = activeNodeId;
+  // 节点转发时应用转发模型名，让节点拿到正确的本地模型名
+  if (model.forwardModelName) {
+  body = { ...body, model: model.forwardModelName };
+  }
+  }
+ }
+
+  // 节点模式：通过 WebSocket 转发，不使用 HTTP 转发
+  const activeNodeId = (req as any).activeNodeId;
+  const isNodeMode = model.forwardingMode === 'node' && !!activeNodeId && isNodeConnected(activeNodeId);
  // provider 模式下 key 选择已成功，HTTP 转发一定可用，无需再次检查缓存
  const hasHttpForwarding = (model.forwardingMode === 'provider')
  || (model.forwardingMode !== 'none'
@@ -531,6 +575,7 @@ async function handleChatRequest(
  createdAt: Date.now(),
  resolve: () => {},
  requestParams,
+ requestType: 'chat',
  };
 
  const responsePromise = new Promise<string>((resolve) => {
@@ -662,6 +707,7 @@ async function handleChatRequest(
  isStream: true,
  createdAt: Date.now(),
  resolve: () => {},
+ requestType: 'chat',
   streamController: {
   enqueue: (content: string) => {
   if (!streamEnded) {
@@ -687,8 +733,8 @@ async function handleChatRequest(
 
  addPendingRequest(pending);
 
- if (model.forwardingMode === 'node' && model.nodeId && isNodeConnected(model.nodeId)) {
- const sent = sendRequestToNode(model.nodeId, pending);
+ if (model.forwardingMode === 'node' && activeNodeId && isNodeConnected(activeNodeId)) {
+ const sent = sendRequestToNode(activeNodeId, pending);
  if (!sent) {
  removePendingRequest(requestId);
  if (model.allowManualReply === false) {
@@ -720,14 +766,15 @@ async function handleChatRequest(
  removePendingRequest(requestId);
  });
  } else {
- const pending: PendingRequest = {
- requestId,
- request: body,
- isStream: false,
- createdAt: Date.now(),
- resolve: () => {},
- requestParams,
- };
+  const pending: PendingRequest = {
+  requestId,
+  request: body,
+  isStream: false,
+  createdAt: Date.now(),
+  resolve: () => {},
+  requestParams,
+  requestType: 'chat',
+  };
 
  const responsePromise = new Promise<string>((resolve) => {
  pending.resolve = resolve;
@@ -735,8 +782,8 @@ async function handleChatRequest(
 
  addPendingRequest(pending);
 
- if (model.forwardingMode === 'node' && model.nodeId && isNodeConnected(model.nodeId)) {
- const sent = sendRequestToNode(model.nodeId, pending);
+ if (model.forwardingMode === 'node' && activeNodeId && isNodeConnected(activeNodeId)) {
+ const sent = sendRequestToNode(activeNodeId, pending);
  if (!sent) {
  removePendingRequest(requestId);
  if (model.allowManualReply === false) {

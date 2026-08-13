@@ -35,6 +35,11 @@ import {
  addNode,
  updateNode,
  deleteNode,
+ getAllNodeGroups,
+ getNodeGroupById,
+ createNodeGroup,
+ updateNodeGroup,
+ deleteNodeGroup,
 } from '../storage.js';
 
 const router: Router = Router();
@@ -768,7 +773,9 @@ router.delete('/nodes/:id', authMiddleware, adminMiddleware, async (req: AuthReq
 });
 
 /**
- * 签发或轮换节点 token
+ * 获取或签发节点 token
+ * - 不带 rotate：返回当前版本的 token（可反复获取，JWT 内容确定性生成）
+ * - rotate=true：tokenVersion+1 并签发新 token（旧 token 全部失效）
  */
 router.post('/nodes/:id/token', authMiddleware, adminMiddleware, async (req: AuthRequest, res: Response) => {
  try {
@@ -826,6 +833,112 @@ router.get('/nodes/:id/status', authMiddleware, adminMiddleware, (req: AuthReque
  } catch (error) {
  console.error('[Get Node Status Error]', error);
  res.status(500).json({ error: 'Failed to get node status' });
+  }
+});
+
+// ==================== 节点组管理 ====================
+
+/**
+ * 获取所有节点组
+ */
+router.get('/node-groups', authMiddleware, adminMiddleware, (req: AuthRequest, res: Response) => {
+ try {
+ const groups = getAllNodeGroups();
+ res.json({ nodeGroups: groups });
+ } catch (error) {
+ console.error('[Get Node Groups Error]', error);
+ res.status(500).json({ error: 'Failed to get node groups' });
+ }
+});
+
+/**
+ * 获取单个节点组
+ */
+router.get('/node-groups/:id', authMiddleware, adminMiddleware, (req: AuthRequest, res: Response) => {
+ try {
+ const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+ const group = getNodeGroupById(id);
+ if (!group) {
+ return res.status(404).json({ error: 'Node group not found' });
+ }
+ res.json(group);
+ } catch (error) {
+ console.error('[Get Node Group Error]', error);
+ res.status(500).json({ error: 'Failed to get node group' });
+ }
+});
+
+/**
+ * 创建节点组
+ */
+router.post('/node-groups', authMiddleware, adminMiddleware, async (req: AuthRequest, res: Response) => {
+ try {
+ const { name, description, schedule, nodeIds, priorities, enabled } = req.body;
+ if (!name) {
+ return res.status(400).json({ error: 'name is required' });
+ }
+ if (schedule && !['round-robin', 'random', 'priority'].includes(schedule)) {
+ return res.status(400).json({ error: 'schedule must be round-robin | random | priority' });
+ }
+ const created = await createNodeGroup({
+ name,
+ description,
+ schedule: schedule || 'round-robin',
+ nodeIds: Array.isArray(nodeIds) ? nodeIds : [],
+ priorities,
+ enabled: enabled !== false,
+ });
+ res.status(201).json(created);
+ } catch (error) {
+ console.error('[Create Node Group Error]', error);
+ res.status(500).json({ error: 'Failed to create node group' });
+ }
+});
+
+/**
+ * 更新节点组
+ */
+router.put('/node-groups/:id', authMiddleware, adminMiddleware, async (req: AuthRequest, res: Response) => {
+ try {
+ const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+ const exists = getNodeGroupById(id);
+ if (!exists) {
+ return res.status(404).json({ error: 'Node group not found' });
+ }
+ const { name, description, schedule, nodeIds, priorities, enabled } = req.body;
+ if (schedule && !['round-robin', 'random', 'priority'].includes(schedule)) {
+ return res.status(400).json({ error: 'schedule must be round-robin | random | priority' });
+ }
+ const updated = await updateNodeGroup(id, {
+ ...(name !== undefined ? { name } : {}),
+ ...(description !== undefined ? { description } : {}),
+ ...(schedule !== undefined ? { schedule } : {}),
+ ...(nodeIds !== undefined ? { nodeIds } : {}),
+ ...(priorities !== undefined ? { priorities } : {}),
+ ...(enabled !== undefined ? { enabled } : {}),
+ });
+ res.json(updated);
+ } catch (error) {
+ console.error('[Update Node Group Error]', error);
+ res.status(500).json({ error: 'Failed to update node group' });
+ }
+});
+
+/**
+ * 删除节点组
+ */
+router.delete('/node-groups/:id', authMiddleware, adminMiddleware, async (req: AuthRequest, res: Response) => {
+ try {
+ const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+ const exists = getNodeGroupById(id);
+ if (!exists) {
+ return res.status(404).json({ error: 'Node group not found' });
+ }
+ await deleteNodeGroup(id);
+ res.json({ message: 'Node group deleted' });
+ } catch (error) {
+ console.error('[Delete Node Group Error]', error);
+ res.status(500).json({ error: 'Failed to delete node group' });
  }
 });
 

@@ -20,7 +20,8 @@ import {
   loadWorkflows,
  loadProviders,
  loadNodes,
-  getServerConfig,
+ loadNodeGroups,
+ getServerConfig,
   getSettings,
   getAllModels,
   getModel,
@@ -100,6 +101,7 @@ async function initializeApp() {
     await loadWorkflows();
  await loadProviders();
  await loadNodes();
+ await loadNodeGroups();
 
     // 初始化支付系统
     const db = getDB();

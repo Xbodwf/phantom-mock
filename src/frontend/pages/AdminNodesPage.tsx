@@ -27,13 +27,19 @@ import {
   Switch,
   FormControlLabel,
   InputAdornment,
+  Tabs,
+  Tab,
+  MenuItem,
+  Select,
+  FormControl,
+  InputLabel,
 } from '@mui/material';
-import { Edit2, Trash2, Plus, Key, Search, RefreshCw, Copy, CheckCircle, XCircle, Wifi, WifiOff } from 'lucide-react';
+import { Edit2, Trash2, Plus, Key, Search, RefreshCw, Copy, CheckCircle, XCircle, Wifi, WifiOff, Users } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { copyToClipboard } from '../utils/clipboard';
 import axios from 'axios';
-import type { Node } from '../types';
+import type { Node, NodeGroup } from '../types';
 
 interface NodeStatus {
   id: string;
@@ -82,13 +88,40 @@ export function AdminNodesPage() {
   // 状态映射
   const [nodeStatuses, setNodeStatuses] = useState<Record<string, NodeStatus>>({});
 
+  // 标签页：0=节点，1=节点组
+  const [tab, setTab] = useState(0);
+
+  // 节点组
+  const [nodeGroups, setNodeGroups] = useState<NodeGroup[]>([]);
+  const [showGroupDialog, setShowGroupDialog] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<NodeGroup | null>(null);
+  const [groupForm, setGroupForm] = useState({
+    name: '',
+    description: '',
+    schedule: 'round-robin' as 'round-robin' | 'random' | 'priority',
+    nodeIds: [] as string[],
+    enabled: true,
+  });
+
   useEffect(() => {
     if (!user || !token || user.role !== 'admin') {
       navigate('/login');
       return;
     }
     fetchNodes();
+    fetchNodeGroups();
   }, [user, token, navigate]);
+
+  const fetchNodeGroups = async () => {
+    try {
+      const response = await axios.get('/api/admin/node-groups', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setNodeGroups(response.data.nodeGroups || []);
+    } catch (err: any) {
+      console.error('Failed to fetch node groups:', err);
+    }
+  };
 
   const fetchNodes = async () => {
     try {
@@ -224,6 +257,89 @@ export function AdminNodesPage() {
     }
   };
 
+  // 节点组操作
+  const handleCreateGroup = () => {
+    setEditingGroup(null);
+    setGroupForm({
+      name: '',
+      description: '',
+      schedule: 'round-robin',
+      nodeIds: [],
+      enabled: true,
+    });
+    setShowGroupDialog(true);
+  };
+
+  const handleEditGroup = (group: NodeGroup) => {
+    setEditingGroup(group);
+    setGroupForm({
+      name: group.name,
+      description: group.description || '',
+      schedule: group.schedule,
+      nodeIds: [...group.nodeIds],
+      enabled: group.enabled,
+    });
+    setShowGroupDialog(true);
+  };
+
+  const handleSaveGroup = async () => {
+    if (!groupForm.name) {
+      setError(t('nodes.group.validation.name'));
+      return;
+    }
+    try {
+      const payload = {
+        name: groupForm.name,
+        description: groupForm.description || undefined,
+        schedule: groupForm.schedule,
+        nodeIds: groupForm.nodeIds,
+        enabled: groupForm.enabled,
+      };
+      if (editingGroup) {
+        await axios.put(
+          `/api/admin/node-groups/${editingGroup.id}`,
+          payload,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        setSuccess(t('nodes.group.updateSuccess'));
+      } else {
+        await axios.post(
+          '/api/admin/node-groups',
+          payload,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        setSuccess(t('nodes.group.createSuccess'));
+      }
+      setShowGroupDialog(false);
+      await fetchNodeGroups();
+    } catch (err: any) {
+      setError(err.response?.data?.error || t('errors.failedToCreate'));
+    }
+  };
+
+  const handleDeleteGroup = async (id: string) => {
+    if (!confirm(t('nodes.group.confirmDelete'))) return;
+    try {
+      await axios.delete(`/api/admin/node-groups/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setSuccess(t('nodes.group.deleteSuccess'));
+      await fetchNodeGroups();
+    } catch (err: any) {
+      setError(err.response?.data?.error || t('errors.failedToDelete'));
+    }
+  };
+
+  const toggleNodeInGroup = (nodeId: string) => {
+    setGroupForm(prev => {
+      const has = prev.nodeIds.includes(nodeId);
+      return {
+        ...prev,
+        nodeIds: has ? prev.nodeIds.filter(id => id !== nodeId) : [...prev.nodeIds, nodeId],
+      };
+    });
+  };
+
   const copyToken = () => {
     if (tokenData?.token) {
       copyToClipboard(tokenData.token)
@@ -275,6 +391,106 @@ export function AdminNodesPage() {
         </Alert>
       )}
 
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3 }}>
+        <Tab icon={<Wifi size={16} />} iconPosition="start" label={t('nodes.tab.nodes')} />
+        <Tab icon={<Users size={16} />} iconPosition="start" label={t('nodes.tab.groups')} />
+      </Tabs>
+
+      {tab === 1 && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                {t('nodes.group.title')}
+              </Typography>
+              <Button variant="contained" startIcon={<Plus size={16} />} onClick={handleCreateGroup}>
+                {t('nodes.group.createButton')}
+              </Button>
+            </Box>
+
+            {nodeGroups.length === 0 ? (
+              <Typography sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                {t('nodes.group.noGroups')}
+              </Typography>
+            ) : (
+              <TableContainer>
+                <Table>
+                  <TableHead>
+                    <TableRow sx={{ backgroundColor: 'action.hover' }}>
+                      <TableCell>{t('common.name')}</TableCell>
+                      <TableCell>{t('nodes.group.schedule')}</TableCell>
+                      <TableCell>{t('nodes.group.nodes')}</TableCell>
+                      <TableCell>{t('common.status')}</TableCell>
+                      <TableCell align="right">{t('common.actions')}</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {nodeGroups.map((group) => {
+                      const onlineCount = group.nodeIds.filter(id => {
+                        const n = nodes.find(nn => nn.id === id);
+                        return n && nodeStatuses[id]?.connected;
+                      }).length;
+                      return (
+                        <TableRow key={group.id} hover>
+                          <TableCell sx={{ fontWeight: 500 }}>{group.name}</TableCell>
+                          <TableCell>
+                            <Chip
+                              label={group.schedule === 'round-robin' ? '轮换' : group.schedule === 'random' ? '随机' : '优先级'}
+                              size="small"
+                              variant="outlined"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                              {group.nodeIds.map(nid => {
+                                const n = nodes.find(nn => nn.id === nid);
+                                const connected = !!nodeStatuses[nid]?.connected;
+                                return (
+                                  <Chip
+                                    key={nid}
+                                    label={n?.name || nid}
+                                    size="small"
+                                    color={connected ? 'success' : 'default'}
+                                    variant={connected ? 'filled' : 'outlined'}
+                                  />
+                                );
+                              })}
+                              {group.nodeIds.length === 0 && (
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                                  {t('nodes.group.noNodesInGroup')}
+                                </Typography>
+                              )}
+                            </Stack>
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={group.enabled ? t('common.active') : t('common.disabled')}
+                              size="small"
+                              color={group.enabled ? 'success' : 'error'}
+                            />
+                          </TableCell>
+                          <TableCell align="right">
+                            <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                              <IconButton size="small" onClick={() => handleEditGroup(group)}>
+                                <Edit2 size={18} />
+                              </IconButton>
+                              <IconButton size="small" color="error" onClick={() => handleDeleteGroup(group.id)}>
+                                <Trash2 size={18} />
+                              </IconButton>
+                            </Stack>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === 0 && (
       <Card>
         <CardContent>
           <Box sx={{ mb: 3 }}>
@@ -320,8 +536,8 @@ export function AdminNodesPage() {
                         <TableCell sx={{ fontFamily: 'monospace' }}>{node.id}</TableCell>
                         <TableCell>
                           <Stack direction="row" spacing={0.5} alignItems="center">
-                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                              {node.key ? `${node.key.substring(0, 12)}...` : '-'}
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {node.key ? node.key : '-'}
                             </Typography>
                             {node.key && (
                               <IconButton size="small" onClick={() => {
@@ -419,8 +635,9 @@ export function AdminNodesPage() {
               </Table>
             </TableContainer>
           )}
-        </CardContent>
+          </CardContent>
       </Card>
+      )}
 
       {/* Node 对话框 */}
       <Dialog open={showNodeDialog} onClose={() => setShowNodeDialog(false)} maxWidth="sm" fullWidth>
@@ -534,6 +751,99 @@ export function AdminNodesPage() {
             {t('common.copy')}
           </Button>
           <Button onClick={() => setShowTokenDialog(false)}>{t('common.close')}</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 节点组对话框 */}
+      <Dialog open={showGroupDialog} onClose={() => setShowGroupDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          {editingGroup ? t('nodes.group.editTitle') : t('nodes.group.createTitle')}
+        </DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 2 }}>
+            <TextField
+              fullWidth
+              label={t('common.name')}
+              value={groupForm.name}
+              onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })}
+            />
+            <TextField
+              fullWidth
+              label={t('common.description')}
+              value={groupForm.description}
+              onChange={(e) => setGroupForm({ ...groupForm, description: e.target.value })}
+              multiline
+              rows={2}
+            />
+            <FormControl fullWidth>
+              <InputLabel>{t('nodes.group.schedule')}</InputLabel>
+              <Select
+                value={groupForm.schedule}
+                label={t('nodes.group.schedule')}
+                onChange={(e) => setGroupForm({ ...groupForm, schedule: e.target.value as any })}
+              >
+                <MenuItem value="round-robin">{t('nodes.group.scheduleRoundRobin')}</MenuItem>
+                <MenuItem value="random">{t('nodes.group.scheduleRandom')}</MenuItem>
+                <MenuItem value="priority">{t('nodes.group.schedulePriority')}</MenuItem>
+              </Select>
+            </FormControl>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+              {t('nodes.group.selectNodes')}
+            </Typography>
+            {nodes.length === 0 ? (
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                {t('nodes.group.noNodesAvailable')}
+              </Typography>
+            ) : (
+              nodes.map(node => {
+                const selected = groupForm.nodeIds.includes(node.id);
+                const connected = !!nodeStatuses[node.id]?.connected;
+                return (
+                  <Box
+                    key={node.id}
+                    onClick={() => toggleNodeInGroup(node.id)}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      p: 1.5,
+                      borderRadius: 2,
+                      border: '1px solid',
+                      borderColor: selected ? 'primary.main' : 'divider',
+                      cursor: 'pointer',
+                      backgroundColor: selected ? 'action.selected' : 'transparent',
+                      '&:hover': { backgroundColor: 'action.hover' },
+                    }}
+                  >
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        {node.name} <span style={{ fontFamily: 'monospace', fontSize: '0.7rem', color: '#888' }}>{node.id}</span>
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                        {connected ? t('nodes.connected') : t('nodes.disconnected')}
+                      </Typography>
+                    </Box>
+                    {selected ? <CheckCircle size={18} color="#4caf50" /> : <XCircle size={18} color="#bbb" />}
+                  </Box>
+                );
+              })
+            )}
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={groupForm.enabled}
+                  onChange={(e) => setGroupForm({ ...groupForm, enabled: e.target.checked })}
+                />
+              }
+              label={t('common.enabled')}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowGroupDialog(false)}>{t('common.cancel')}</Button>
+          <Button variant="contained" onClick={handleSaveGroup}>
+            {t('common.save')}
+          </Button>
         </DialogActions>
       </Dialog>
     </Container>

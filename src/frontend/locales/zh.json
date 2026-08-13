@@ -918,8 +918,35 @@
       "nodeId": "节点 ID",
       "version": "Token 版本",
       "token": "Token",
-      "warning": "请妥善保存此 Token，关闭后将无法再次查看完整内容",
+      "warning": "Token 可随时重新获取；轮换会作废旧版本",
       "failed": "获取 Token 失败"
+    },
+    "tab": {
+      "nodes": "节点",
+      "groups": "节点组"
+    },
+    "group": {
+      "title": "节点组管理",
+      "description": "将多个节点编组，按调度策略分发请求（号池）",
+      "createButton": "添加节点组",
+      "createTitle": "创建节点组",
+      "editTitle": "编辑节点组",
+      "noGroups": "暂无节点组",
+      "noNodesInGroup": "组内暂无节点",
+      "noNodesAvailable": "暂无可用节点，请先添加节点",
+      "selectNodes": "选择组内节点",
+      "schedule": "调度策略",
+      "scheduleRoundRobin": "轮换（round-robin）",
+      "scheduleRandom": "随机（random）",
+      "schedulePriority": "优先级（priority）",
+      "nodes": "组内节点",
+      "confirmDelete": "确定要删除此节点组吗？关联模型将回退到单节点/无节点模式",
+      "createSuccess": "节点组创建成功",
+      "updateSuccess": "节点组更新成功",
+      "deleteSuccess": "节点组删除成功",
+      "validation": {
+        "name": "请输入节点组名称"
+      }
     }
   }
 }

@@ -14,3 +14,4 @@ export * as invitationsDB from './invitations';
 export * as paymentOrdersDB from './paymentOrders';
 export * as providersDB from './providers';
 export * as nodesDB from './nodes';
+export * as nodeGroupsDB from './nodeGroups';

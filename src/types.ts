@@ -188,6 +188,26 @@ export interface Node {
  updatedAt: number;
 }
 
+/**
+ * 节点组（号池）
+ * 一个模型可关联节点组，请求按调度策略分发到组内在线节点，
+ * 实现多节点负载分摊与故障自动跳过。
+ */
+export interface NodeGroup {
+ id: string;
+ name: string;
+ description?: string;
+ /** 调度策略：round-robin 轮换 / random 随机 / priority 按优先级 */
+ schedule: 'round-robin' | 'random' | 'priority';
+ /** 组内节点 ID 列表 */
+ nodeIds: string[];
+ /** 各节点优先级（priority 策略用）：nodeId -> priority */
+ priorities?: Record<string, number>;
+ enabled: boolean;
+ createdAt: number;
+ updatedAt: number;
+}
+
 export interface NodeTokenPayload {
  nodeId: string;
  role: 'node';
@@ -263,7 +283,8 @@ export interface Model {
   thinkingModelType?: 'openai' | 'deepseek' | 'gemini' | 'claude'; // 思考模型类型
  forwardingMode?: 'provider' | 'node' | 'none'; // 转发模式
  providerId?: string; //关联提供商ID
- nodeId?: string; //关联节点ID
+ nodeId?: string; //关联节点ID（单节点模式）
+ nodeGroupId?: string; //关联节点组ID（节点组调度模式，优先于 nodeId）
  providerUid?: string; // 服务提供者UID（@uid）
  commissionRatio?: number; //佣金比例（0-1）
   

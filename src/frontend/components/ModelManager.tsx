@@ -178,6 +178,7 @@ interface FormData {
   forwardingMode: 'provider' | 'node' | 'none';
   providerId: string;
   nodeId: string;
+  nodeGroupId: string;
   api_url_path: string;           // 相对路径
   api_url_path_2: string;         // 第二相对路径：图片编辑(openai) / 流式转发(gemini)
   api_type: ApiType;
@@ -223,6 +224,7 @@ const defaultFormData: FormData = {
   forwardingMode: 'none',
   providerId: '',
   nodeId: '',
+  nodeGroupId: '',
   api_url_path: '',
   api_url_path_2: '',
   api_type: 'openai',
@@ -258,6 +260,7 @@ export default function ModelManager() {
   // Providers 和 Nodes 状态
   const [providers, setProviders] = useState<Provider[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
+  const [nodeGroups, setNodeGroups] = useState<any[]>([]);
 
   // 图标相关状态
   const [availableIcons, setAvailableIcons] = useState<Array<{ filename: string; url: string }>>([]);
@@ -274,12 +277,14 @@ export default function ModelManager() {
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     
     try {
-      const [providersRes, nodesRes] = await Promise.all([
+      const [providersRes, nodesRes, groupsRes] = await Promise.all([
         axios.get('/api/admin/providers', { headers }),
         axios.get('/api/admin/nodes', { headers }),
+        axios.get('/api/admin/node-groups', { headers }).catch(() => ({ data: { nodeGroups: [] } })),
       ]);
       setProviders(providersRes.data.providers || []);
       setNodes(nodesRes.data.nodes || []);
+      setNodeGroups(groupsRes.data.nodeGroups || []);
     } catch (error) {
       console.error('Failed to fetch providers/nodes:', error);
     }
@@ -361,7 +366,7 @@ export default function ModelManager() {
       let forwardingMode: 'provider' | 'node' | 'none' = 'none';
       if (model.forwardingMode === 'provider' || model.providerId) {
         forwardingMode = 'provider';
-      } else if (model.forwardingMode === 'node' || model.nodeId) {
+      } else if (model.forwardingMode === 'node' || model.nodeId || model.nodeGroupId) {
         forwardingMode = 'node';
       }
       
@@ -389,6 +394,7 @@ export default function ModelManager() {
         forwardingMode,
         providerId: model.providerId || '',
         nodeId: model.nodeId || '',
+        nodeGroupId: model.nodeGroupId || '',
         api_url_path,
         api_url_path_2: model.api_url_path_2 || '',
         api_type: model.api_type || 'openai',
@@ -444,6 +450,7 @@ export default function ModelManager() {
     const forwardingMode = formData.forwardingMode;
     const providerId = forwardingMode === 'provider' ? formData.providerId : undefined;
     const nodeId = forwardingMode === 'node' ? formData.nodeId : undefined;
+    const nodeGroupId = forwardingMode === 'node' ? (formData.nodeGroupId || undefined) : undefined;
 
     const modelData = {
       id: formData.id,
@@ -472,6 +479,7 @@ export default function ModelManager() {
       forwardingMode,
       providerId,
       nodeId,
+      nodeGroupId,
       api_type: formData.api_type || undefined,
       forwardModelName: formData.forwardModelName || undefined,
       api_url_path: formData.api_url_path.trim() || undefined,
@@ -1051,6 +1059,33 @@ export default function ModelManager() {
                         nodes.map(n => (
                           <MenuItem key={n.id} value={n.id}>
                             {n.name} ({n.status === 'online' ? t('nodes.connected') : t('nodes.disconnected')})
+                          </MenuItem>
+                        ))
+                      )}
+                    </Select>
+                  </FormControl>
+                )}
+
+                {/* 节点组选择（号池） */}
+                {formData.forwardingMode === 'node' && (
+                  <FormControl fullWidth size="small">
+                    <InputLabel>{t('models.manager.selectNodeGroup', '选择节点组（号池）')}</InputLabel>
+                    <Select
+                      value={formData.nodeGroupId}
+                      label={t('models.manager.selectNodeGroup', '选择节点组（号池）')}
+                      onChange={(e) => setFormData({ ...formData, nodeGroupId: e.target.value })}
+                    >
+                      <MenuItem value="">
+                        {t('models.manager.noNodeGroup', '不使用节点组')}
+                      </MenuItem>
+                      {nodeGroups.length === 0 ? (
+                        <MenuItem disabled value="">
+                          {t('models.manager.noNodeGroups', '暂无节点组')}
+                        </MenuItem>
+                      ) : (
+                        nodeGroups.map(g => (
+                          <MenuItem key={g.id} value={g.id}>
+                            {g.name} ({g.schedule === 'round-robin' ? '轮换' : g.schedule === 'random' ? '随机' : '优先级'})
                           </MenuItem>
                         ))
                       )}
