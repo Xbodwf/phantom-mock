@@ -1,5 +1,5 @@
 import { join } from 'path';
-import type { Model, ApiKey, User, UsageRecord, Invoice, Action, Workflow, InvitationRecord, Notification, Provider, Node, ProviderApiKey } from './types.js';
+import type { Model, ApiKey, User, UsageRecord, Invoice, Action, Workflow, WorkflowRun, InvitationRecord, Notification, Provider, Node, ProviderApiKey } from './types.js';
 import { randomBytes } from 'crypto';
 import { connectDB, getDB, initializeIndexes } from './db/index.js';
 import * as modelsDB from './db/models.js';
@@ -593,6 +593,37 @@ export async function deleteWorkflow(id: string): Promise<boolean> {
 
   workflowsCache.splice(index, 1);
   return true;
+}
+
+// ==================== Workflow 运行记录管理 ====================
+
+let workflowRunsCache: WorkflowRun[] = [];
+
+export function getAllWorkflowRuns(userId?: string, workflowId?: string): WorkflowRun[] {
+  let runs = workflowRunsCache;
+  if (userId) runs = runs.filter(r => r.userId === userId);
+  if (workflowId) runs = runs.filter(r => r.workflowId === workflowId);
+  return [...runs].sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+}
+
+export function getWorkflowRunById(id: string): WorkflowRun | undefined {
+  return workflowRunsCache.find(r => r.id === id);
+}
+
+export async function createWorkflowRun(run: WorkflowRun): Promise<WorkflowRun> {
+  workflowRunsCache.unshift(run);
+  return run;
+}
+
+export async function updateWorkflowRun(id: string, updates: Partial<WorkflowRun>): Promise<WorkflowRun | null> {
+  const index = workflowRunsCache.findIndex(r => r.id === id);
+  if (index === -1) return null;
+  workflowRunsCache[index] = {
+    ...workflowRunsCache[index],
+    ...updates,
+    completedAt: updates.status === 'success' || updates.status === 'failure' ? Date.now() : workflowRunsCache[index].completedAt,
+  };
+  return workflowRunsCache[index];
 }
 
 // ==================== 邀请记录管理 ====================

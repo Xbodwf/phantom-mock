@@ -32,19 +32,22 @@ export function entryVariantToProtocol(entryVariant: string): TransmuxProtocol {
 
 /**
  * 判断是否应直出（同协议零转换透传）。
- * gemini generate-content -> gemini generate-content、openai chat -> openai chat 等。
+ * 仅当「入口变体」与「目标变体」语义一致时才直出，
+ * 否则即使协议相同也必须走 IR 转换（如 responses 入口 -> chat-completions 上游）。
  */
 export function shouldPassthrough(entryVariant: string, targetProtocol: string, targetVariant: string): boolean {
   const entryProtocol = entryVariantToProtocol(entryVariant);
   if (entryProtocol !== targetProtocol) return false;
-  // 流式/非流式同协议间允许直出
-  const compatible =
-    (targetVariant === 'chat-completions') ||
-    (targetVariant === 'responses') ||
-    (targetVariant === 'messages') ||
-    (targetVariant === 'generate-content') ||
-    (targetVariant === 'stream-generate-content');
-  return compatible;
+  // 变体必须匹配：chat->chat、responses->responses、generate-content->generate-content
+  // google 的流式/非流式 pair 视为兼容（stream-generate-content <-> generate-content）
+  if (entryProtocol === 'google') {
+    return targetVariant === 'generate-content' || targetVariant === 'stream-generate-content';
+  }
+  if (entryProtocol === 'anthropic') {
+    return targetVariant === 'messages';
+  }
+  // openai
+  return entryVariant === targetVariant;
 }
 
 /** (协议, 变体) -> resolveForwardUrl 使用的 endpoint */

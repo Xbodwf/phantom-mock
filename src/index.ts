@@ -225,6 +225,34 @@ if (ssrEnabled) {
 
 // SPA fallback - 在所有路由挂载后再挂载
     app.use((req: Request, res: Response) => {
+      // 已知的 POST-only 端点：GET/HEAD 等访问返回 405 而非 404
+      if (req.method !== 'POST') {
+        const postOnly = [
+          '/v1/chat/completions',
+          '/v1/completions',
+          '/v1/responses',
+          '/v1/embeddings',
+          '/v1/moderations',
+          '/v1/rerank',
+          '/v1/images/generations',
+          '/v1/images/edits',
+          '/v1/images/edit',
+          '/v1/videos/generations',
+          '/v1/messages',
+          '/v1/actions/completions',
+        ];
+        const isPostOnly = postOnly.some(p => req.path === p || req.path.startsWith(p + '/'));
+        if (isPostOnly) {
+          return res.status(405).json({
+            error: {
+              message: 'Method Not Allowed. This endpoint only accepts POST requests.',
+              type: 'invalid_request_error',
+              code: 'method_not_allowed',
+            },
+          });
+        }
+      }
+
       // 如果是 API 请求但未匹配到路由，返回 404
       if (req.path.startsWith('/api/') || req.path.startsWith('/v1/') || req.path.startsWith('/v1beta/')) {
         return res.status(404).json({ error: 'Not found' });

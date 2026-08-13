@@ -9,6 +9,8 @@ import {
   createWorkflow,
   updateWorkflow,
   deleteWorkflow,
+  createWorkflowRun,
+  updateWorkflowRun,
 } from '../storage.js';
 import type { Workflow, WorkflowRun } from '../types.js';
 import { createExecutionContext } from '../actions/context.js';
@@ -178,6 +180,9 @@ router.post('/workflows/:id/run', authMiddleware, async (req: AuthRequest, res: 
       startedAt: Date.now(),
     };
 
+    // 保存运行记录
+    await createWorkflowRun(workflowRun);
+
     // 创建执行上下文
     const context = createExecutionContext(
       id,
@@ -190,12 +195,23 @@ router.post('/workflows/:id/run', authMiddleware, async (req: AuthRequest, res: 
     // 创建执行器
     const executor = createWorkflowExecutor(workflow, workflowRun, context);
 
-    // 异步执行工作流
-    executor.execute().then(result => {
-      // 这里可以保存运行结果到数据库
-      console.log('Workflow execution completed:', result);
-    }).catch(error => {
+    // 异步执行工作流，完成后保存结果
+    executor.execute().then(async (result) => {
+      await updateWorkflowRun(result.id, {
+        status: result.status,
+        stepRuns: result.stepRuns,
+        outputs: result.outputs,
+        logs: result.logs,
+        error: result.error,
+        completedAt: result.completedAt,
+      });
+      console.log('Workflow execution completed:', result.id, result.status);
+    }).catch(async (error) => {
       console.error('Workflow execution error:', error);
+      await updateWorkflowRun(workflowRun.id, {
+        status: 'failure',
+        error: { message: error instanceof Error ? error.message : 'Unknown error', code: 'EXECUTION_ERROR' },
+      });
     });
 
     // 立即返回运行 ID

@@ -2,6 +2,7 @@ import { Worker } from 'worker_threads';
 import { compileTypeScript, preprocessActionCode, extractMetadata } from './compiler.js';
 import type { Action, Workflow, WorkflowRun, StepRun } from '../types.js';
 import { ExecutionContext } from './context.js';
+import { getActionByName } from '../storage.js';
 
 const WORKER_CODE = `
 const { parentPort, workerData } = require('worker_threads');
@@ -348,7 +349,31 @@ export class WorkflowExecutor {
       const inputs = this.context.replaceExpressions(step.with || {});
       stepRun.inputs = inputs;
 
-      const outputs = { result: 'placeholder' };
+      // 解析 action 名（支持 'phantom/call-model@v1' -> 'phantom/call-model'）
+      const actionName = (step.uses || '').replace(/@.*$/, '');
+      const action = getActionByName(actionName);
+
+      let outputs: Record<string, any>;
+      if (!action) {
+        throw new Error(`Step '${step.id}': action '${actionName}' not found`);
+      }
+
+      // 执行 action（每个 step 独立 worker，超时默认 30s，可被 step.timeout 覆盖）
+      const timeoutMs = step.timeout ? step.timeout * 1000 : 30000;
+      const executionResult = await executeAction(
+        action,
+        inputs,
+        timeoutMs,
+        this.workflowRun.userId,
+        undefined,
+      );
+      outputs = typeof executionResult.result === 'object'
+        ? executionResult.result as Record<string, any>
+        : { result: executionResult.result };
+      // 附加 usage，供后续步骤或 outputs 引用
+      if (executionResult.usage) {
+        outputs = { ...outputs, usage: executionResult.usage };
+      }
 
       this.context.setStepOutput(step.id, outputs);
       stepRun.outputs = outputs;

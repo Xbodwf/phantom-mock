@@ -10,6 +10,7 @@ import {
   type TransmuxAdapter,
   type AdapterContext,
 } from './index.js';
+import { shouldPassthrough } from './connect.js';
 
 let passed = 0;
 let failed = 0;
@@ -417,6 +418,16 @@ console.log('\n=== 7. 图片 / 嵌入 / 重排序（adapter 层）===\n');
   const resp: any = googleAdapter.fromEmbeddingResponse?.({ embedding: { values: [0.5, 0.6] } }, 'm');
   check('gemini嵌入 fromResponse', resp.data[0].embedding[0] === 0.5 && resp.data[0].index === 0);
 }
+
+console.log('\n=== 8. shouldPassthrough 直出判定 ===\n');
+
+check('responses入口->chat上游 不走直出', shouldPassthrough('responses', 'openai', 'chat-completions') === false);
+check('chat入口->chat上游 直出', shouldPassthrough('chat-completions', 'openai', 'chat-completions') === true);
+check('responses入口->responses上游 直出', shouldPassthrough('responses', 'openai', 'responses') === true);
+check('messages入口->messages上游 直出', shouldPassthrough('messages', 'anthropic', 'messages') === true);
+check('messages入口->chat上游 不走直出', shouldPassthrough('messages', 'openai', 'chat-completions') === false);
+check('generate-content入口->stream上游 直出', shouldPassthrough('generate-content', 'google', 'stream-generate-content') === true);
+check('generate-content入口->messages上游 不走直出', shouldPassthrough('generate-content', 'anthropic', 'messages') === false);
 
 console.log(`\n结果: ${passed} 通过, ${failed} 失败`);
 process.exit(failed > 0 ? 1 : 0);

@@ -1273,7 +1273,7 @@ export default function RequestCard({ requestId, request }: RequestCardProps) {
                           fontSize: '0.65rem',
                         }}
                       >
-                        {msg.role.toUpperCase()}
+                        {(msg.role || 'message').toUpperCase()}
                       </Typography>
                       <MessageContentRenderer content={msg.content} />
                     </Box>

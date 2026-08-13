@@ -6,6 +6,7 @@ import embeddingsRouter from './embeddings.js';
 import moderationsRouter from './moderations.js';
 import rerankRouter from './rerank.js';
 import actionsRouter from './actions/index.js';
+import actionDirectRouter from './actions/direct.js';
 import billingRouter from './billing/index.js';
 import responsesRoutes from './responses.js';
 import imagesRoutes from './images.js';
@@ -32,6 +33,9 @@ router.use('/rerank', rerankRouter);
 
 // Actions 相关路由
 router.use('/actions', actionsRouter);
+
+// Action 原生调用：POST /v1/action/:name
+router.use('/action', actionDirectRouter);
 
 // 计费相关路由
 router.use('/me', billingRouter);
