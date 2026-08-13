@@ -1,5 +1,7 @@
 import axios from 'axios';
-import type { ChatCompletionRequest, Model } from './types.js';
+import type { ChatCompletionRequest, ForwardVariant, Model } from './types.js';
+import { applyModelTarget, selectModelTarget } from './forwarding/targets.js';
+import { getProtocolAdapterOrOpenAI, registerProtocolAdapter } from './forwarding/adapters.js';
 import type { Response } from 'express';
 import { generateRequestId } from './responseBuilder.js';
 import { getProviderById, getNodeById, getSettings } from './storage.js';
@@ -163,6 +165,7 @@ async function getForwarderTimeoutMs(): Promise<number> {
 
 type ForwardEndpoint =
   | 'chat'
+  | 'responses'
   | 'embeddings'
   | 'rerank'
   | 'anthropicMessages'
@@ -172,6 +175,29 @@ type ForwardEndpoint =
   | 'imageGenerations'
   | 'imageEdits';
 
+function registerForwardingAdapters(): void {
+  const openaiAdapter = {
+    protocol: 'openai' as const,
+    variants: ['chat-completions', 'responses', 'embeddings', 'image-generations', 'image-edits'] as const,
+    forwardChat: (model: Model, body: ChatCompletionRequest, variant?: ForwardVariant) => forwardToOpenAI(model, body, variant),
+  };
+  registerProtocolAdapter(openaiAdapter);
+  registerProtocolAdapter({ ...openaiAdapter, protocol: 'azure' });
+  registerProtocolAdapter({ ...openaiAdapter, protocol: 'custom' });
+  registerProtocolAdapter({
+    protocol: 'anthropic',
+    variants: ['messages'] as const,
+    forwardChat: (model, body) => forwardToAnthropic(model, body),
+  });
+  registerProtocolAdapter({
+    protocol: 'google',
+    variants: ['generate-content', 'stream-generate-content'] as const,
+    forwardChat: (model, body) => forwardToGoogle(model, body),
+  });
+}
+
+registerForwardingAdapters();
+
 function normalizeBaseUrl(baseUrl: string): string {
  return baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
 }
@@ -180,6 +206,51 @@ function appendPath(baseUrl: string, path: string): string {
  const normalizedBase = normalizeBaseUrl(baseUrl);
  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
  return `${normalizedBase}${normalizedPath}`;
+}
+
+function toOpenAIResponsesBody(body: ChatCompletionRequest, model: string): any {
+  const systemMessages = body.messages.filter(message => message.role === 'system');
+  const inputMessages = body.messages.filter(message => message.role !== 'system');
+  return {
+    model,
+    ...(systemMessages.length > 0 ? {
+      instructions: systemMessages
+        .map(message => typeof message.content === 'string' ? message.content : JSON.stringify(message.content))
+        .join('\n'),
+    } : {}),
+    input: inputMessages,
+    stream: body.stream === true,
+    ...(body.max_tokens !== undefined ? { max_output_tokens: body.max_tokens } : {}),
+    ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
+    ...(body.top_p !== undefined ? { top_p: body.top_p } : {}),
+    ...(body.tools ? { tools: body.tools } : {}),
+  };
+}
+
+function fromOpenAIResponsesBody(response: any, requestedModel: string): any {
+  const output = response?.output || [];
+  const message = output.find((item: any) => item.type === 'message');
+  const content = message?.content
+    ?.filter((item: any) => item.type === 'output_text')
+    ?.map((item: any) => item.text || '')
+    ?.join('') || '';
+  const usage = response?.usage;
+  return {
+    id: response?.id || generateRequestId(),
+    object: 'chat.completion',
+    created: response?.created_at || Math.floor(Date.now() / 1000),
+    model: requestedModel,
+    choices: [{
+      index: 0,
+      message: { role: 'assistant', content },
+      finish_reason: response?.status === 'completed' ? 'stop' : null,
+    }],
+    usage: {
+      prompt_tokens: usage?.input_tokens || 0,
+      completion_tokens: usage?.output_tokens || 0,
+      total_tokens: usage?.total_tokens || 0,
+    },
+  };
 }
 
 export function resolveForwardUrl(
@@ -235,22 +306,22 @@ export function resolveForwardUrl(
   : model.api_url_path;
   const baseUrl = normalizeBaseUrl(effectiveBaseUrl || '');
 
-  // 如果有 api_url_path，直接拼接
-  if (api_url_path && api_url_path.trim()) {
+   // 如果有 api_url_path，直接拼接
+   if (api_url_path && api_url_path.trim()) {
   const trimmedPath = api_url_path.trim();
   const normalizedPath = trimmedPath.startsWith('/') ? trimmedPath : `/${trimmedPath}`;
   return `${baseUrl}${normalizedPath}`;
-  }
+   }
 
   if (!baseUrl) {
   throw new Error(`Model not configured for forwarding endpoint: ${endpoint}`);
   }
 
-  switch (endpoint) {
-  case 'chat':
+   switch (endpoint) {
+   case 'chat':
   return baseUrl.includes('/chat/completions')
   ? baseUrl
-  : appendPath(baseUrl, '/chat/completions');
+   : appendPath(baseUrl, '/chat/completions');
   case 'embeddings':
   return baseUrl.includes('/embeddings')
   ? baseUrl
@@ -296,28 +367,19 @@ export async function forwardChatRequest(
   model: Model,
   body: ChatCompletionRequest
 ): Promise<{ success: true; response: any } | { success: false; error: string }> {
-  if (!isModelForwardingConfigured(model)) {
+  const selectedTarget = selectModelTarget(model, 'chat-completions', body.stream ? 'stream' : 'request');
+  const targetModel = applyModelTarget(model, selectedTarget.variant, body.stream ? 'stream' : 'request');
+  if (!isModelForwardingConfigured(targetModel)) {
     return { success: false, error: 'Model not configured for forwarding' };
   }
-
-  const apiType = model.api_type || 'openai';
+  const apiType = targetModel.api_type || 'openai';
 
   try {
-    switch (apiType) {
-      case 'openai':
-      case 'azure':
-      case 'custom':
-        return await forwardToOpenAI(model, body);
-
-      case 'anthropic':
-        return await forwardToAnthropic(model, body);
-
-      case 'google':
-        return await forwardToGoogle(model, body);
-
-      default:
-        return { success: false, error: `Unsupported API type: ${apiType}` };
+    const adapter = getProtocolAdapterOrOpenAI(apiType);
+    if (!adapter.forwardChat) {
+      return { success: false, error: `Protocol adapter '${apiType}' cannot handle chat requests` };
     }
+    return await adapter.forwardChat(targetModel, body, selectedTarget.variant);
   } catch (error: any) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error(`[Forwarder] Error forwarding to ${apiType}:`, errorMessage);
@@ -542,15 +604,24 @@ export async function forwardStreamRequest(
   res: Response,
   onStreamData?: (info: { content: string; reasoningContent?: string | null }) => void
 ): Promise<void> {
-  if (!isModelForwardingConfigured(model)) {
+  // 按请求是否流式选择模型的目标协议变体。
+  const target = selectModelTarget(model, 'chat-completions', 'stream');
+  const targetModel = applyModelTarget(model, target.variant, 'stream');
+  if (!isModelForwardingConfigured(targetModel)) {
     throw new Error('Model not configured for forwarding');
   }
-
-  // 检查模型 API 类型，决定使用哪个流式转发函数
-  const apiType = model.api_type || 'openai-chat';
+  const apiType = targetModel.api_type || 'openai-chat';
   
   if (apiType === 'anthropic') {
-    return forwardAnthropicStream(model, body, res);
+    return forwardAnthropicStream(targetModel, body, res);
+  }
+
+  if (apiType === 'google') {
+    return forwardGoogleChatStream(targetModel, body, res, onStreamData);
+  }
+
+  if (target.variant === 'responses') {
+    return forwardOpenAIResponsesStream(targetModel, body, res, onStreamData);
   }
 
   // 生成统一的请求 ID
@@ -562,9 +633,9 @@ export async function forwardStreamRequest(
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
 
-  const forwardModel = getForwardModelName(model, body.model);
-  const url = resolveForwardUrl(model, 'chat', body.model, forwardModel);
-  const apiKey = getEffectiveApiKey(model);
+  const forwardModel = getForwardModelName(targetModel, body.model);
+  const url = resolveForwardUrl(targetModel, 'chat', body.model, forwardModel);
+  const apiKey = getEffectiveApiKey(targetModel);
 
   console.log(`[Forwarder] 流式转发 URL: ${url}`);
   console.log(`[Forwarder] API Key: ${hideKey(apiKey)}`);
@@ -700,7 +771,8 @@ export async function forwardStreamRequest(
  */
 async function forwardToOpenAI(
   model: Model,
-  body: ChatCompletionRequest
+  body: ChatCompletionRequest,
+  targetVariant: ForwardVariant = 'chat-completions',
 ): Promise<{ success: true; response: any }> {
   const forwardModel = getForwardModelName(model, body.model);
   const url = resolveForwardUrl(model, 'chat', body.model, forwardModel);
@@ -711,6 +783,13 @@ async function forwardToOpenAI(
 
   // 使用转发模型名称
   const forwardBody = { ...body, model: forwardModel };
+
+  // OpenAI Responses 是另一种请求/响应协议，不能直接复用 Chat JSON。
+  if (targetVariant === 'responses') {
+    const responseBody = toOpenAIResponsesBody(body, forwardModel);
+    const response = await axios.post(url, responseBody, axiosConfigFor(model, false));
+    return { success: true, response: fromOpenAIResponsesBody(response.data, body.model) };
+  }
 
   // 透传工具调用中的 thought_signature（不注入空值）
   // Gemini 3 系列模型会验证 thought_signature，空值会导致 "Corrupted thought signature" 错误
@@ -778,6 +857,117 @@ async function forwardToOpenAI(
   }
 
   return { success: true, response: response.data };
+}
+
+export async function forwardResponsesRequest(
+  model: Model,
+  body: any,
+): Promise<{ success: true; response: any } | { success: false; error: string }> {
+  const target = selectModelTarget(model, 'responses', body.stream === true ? 'stream' : 'request');
+  if (target.variant !== 'responses') {
+    return { success: false, error: 'No Responses protocol target configured for this model' };
+  }
+
+  const targetModel = applyModelTarget(model, target.variant, body.stream === true ? 'stream' : 'request');
+  if (!isModelForwardingConfigured(targetModel)) {
+    return { success: false, error: 'Model not configured for forwarding' };
+  }
+
+  const forwardModel = getForwardModelName(targetModel, body.model);
+  const url = resolveForwardUrl(targetModel, 'responses', body.model, forwardModel);
+  const responseBody = { ...body, model: forwardModel };
+  try {
+    const response = await axios.post(url, responseBody, axiosConfigFor(targetModel, body.stream === true));
+    return { success: true, response: response.data };
+  } catch (error: any) {
+    return { success: false, error: JSON.stringify(standardizeErrorResponse(error, targetModel.api_type || 'openai')) };
+  }
+}
+
+function axiosConfigFor(model: Model, stream: boolean): any {
+  const apiKey = getEffectiveApiKey(model);
+  const config: any = {
+    headers: mergeHeaders(model.defaultHeaders, {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    }),
+    timeout: 120000,
+    responseType: stream ? 'stream' : 'json',
+  };
+  if (stream) {
+    config.maxContentLength = Infinity;
+    config.maxBodyLength = Infinity;
+  }
+  return config;
+}
+
+async function forwardOpenAIResponsesStream(
+  model: Model,
+  body: ChatCompletionRequest,
+  res: Response,
+  onStreamData?: (info: { content: string; reasoningContent?: string | null }) => void,
+): Promise<void> {
+  const forwardModel = getForwardModelName(model, body.model);
+  const url = resolveForwardUrl(model, 'responses', body.model, forwardModel);
+  const response = await axios.post(url, toOpenAIResponsesBody(body, forwardModel), axiosConfigFor(model, true));
+  const requestId = generateRequestId();
+  let closed = false;
+  let buffer = '';
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.on('close', () => {
+    closed = true;
+    response.data?.destroy?.();
+  });
+
+  response.data.on('data', (chunk: Buffer) => {
+    if (closed) return;
+    buffer += chunk.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.startsWith('data:')) continue;
+      const raw = line.slice(5).trim();
+      if (!raw || raw === '[DONE]') continue;
+      try {
+        const event = JSON.parse(raw);
+        const text = event.type === 'response.output_text.delta' ? event.delta || '' : '';
+        if (text) {
+          res.write(`data: ${JSON.stringify({
+            id: requestId,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model: body.model,
+            choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+          })}\n\n`);
+          onStreamData?.({ content: text });
+        }
+        if (event.type === 'response.completed') {
+          res.write(`data: ${JSON.stringify({
+            id: requestId,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model: body.model,
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          })}\n\n`);
+        }
+      } catch {
+        // Keep incomplete SSE data until the next transport chunk.
+      }
+    }
+  });
+  response.data.on('end', () => {
+    if (!closed) {
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
+  });
+  response.data.on('error', (error: Error) => {
+    if (!closed) res.destroy(error);
+  });
 }
 
 /**
@@ -1256,6 +1446,112 @@ async function forwardToAnthropic(
   return { success: true, response: transformedStream };
 }
 
+function toGoogleChatBody(body: ChatCompletionRequest): any {
+  const systemMessages = body.messages.filter(message => message.role === 'system');
+  const contents = body.messages
+    .filter(message => message.role !== 'system')
+    .map(message => ({
+      role: message.role === 'assistant' ? 'model' : 'user',
+      parts: typeof message.content === 'string'
+        ? [{ text: message.content }]
+        : message.content.map((item: any) => {
+          if (item.type === 'text') return { text: item.text || '' };
+          if (item.type === 'image_url') {
+            const value = item.image_url?.url || '';
+            const match = value.match(/^data:([^;]+);base64,(.+)$/);
+            return match
+              ? { inlineData: { mimeType: match[1], data: match[2] } }
+              : { text: `[Image: ${value}]` };
+          }
+          return { text: JSON.stringify(item) };
+        }),
+    }));
+
+  const generationConfig: Record<string, unknown> = {};
+  if (body.temperature !== undefined) generationConfig.temperature = body.temperature;
+  if (body.top_p !== undefined) generationConfig.topP = body.top_p;
+  if (body.max_tokens !== undefined) generationConfig.maxOutputTokens = body.max_tokens;
+
+  return {
+    ...(systemMessages.length > 0 ? {
+      systemInstruction: {
+        parts: systemMessages.map(message => ({
+          text: typeof message.content === 'string' ? message.content : JSON.stringify(message.content),
+        })),
+      },
+    } : {}),
+    contents,
+    ...(Object.keys(generationConfig).length > 0 ? { generationConfig } : {}),
+  };
+}
+
+async function forwardGoogleChatStream(
+  model: Model,
+  body: ChatCompletionRequest,
+  res: Response,
+  onStreamData?: (info: { content: string; reasoningContent?: string | null }) => void
+): Promise<void> {
+  const forwardModel = getForwardModelName(model, body.model);
+  const url = resolveForwardUrl(model, 'geminiStreamGenerateContent', body.model, forwardModel);
+  const apiKey = getEffectiveApiKey(model);
+  const response = await axios.post(url, toGoogleChatBody(body), {
+    headers: mergeHeaders(model.defaultHeaders, {
+      'Content-Type': 'application/json',
+    }),
+    timeout: await getForwarderTimeoutMs(),
+    responseType: 'stream',
+  });
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  let closed = false;
+  let buffer = '';
+  res.on('close', () => {
+    closed = true;
+    response.data?.destroy?.();
+  });
+
+  response.data.on('data', (chunk: Buffer) => {
+    if (closed) return;
+    buffer += chunk.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      const raw = line.trim();
+      if (!raw || raw === 'data: [DONE]') continue;
+      const payload = raw.startsWith('data:') ? raw.slice(5).trim() : raw;
+      try {
+        const data = JSON.parse(payload);
+        const text = data.candidates?.[0]?.content?.parts?.map((part: any) => part.text || '').join('') || '';
+        if (!text) continue;
+        const chunkResponse = {
+          id: generateRequestId(),
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: body.model,
+          choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+        };
+        res.write(`data: ${JSON.stringify(chunkResponse)}\n\n`);
+        onStreamData?.({ content: text });
+      } catch {
+        // Gemini may split JSON across transport chunks; keep the remainder buffered.
+      }
+    }
+  });
+  response.data.on('end', () => {
+    if (!closed) {
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
+  });
+  response.data.on('error', (error: Error) => {
+    if (!closed) res.destroy(error);
+  });
+}
+
 /**
  * 转发到 Google Gemini API
  */
@@ -1268,55 +1564,7 @@ async function forwardToGoogle(
 
   console.log(`[Forwarder] Gemini 转发 URL: ${url}`);
 
-  // 转换消息格式：OpenAI -> Google
-  const contents = body.messages.map(m => {
-    // 正确处理多模态消息
-    let parts: any[];
-    if (typeof m.content === 'string') {
-      parts = [{ text: m.content }];
-    } else if (Array.isArray(m.content)) {
-      // 转换OpenAI的多模态格式到Google Gemini格式
-      parts = m.content.map((item: any) => {
-        if (item.type === 'text') {
-          return { text: item.text };
-        } else if (item.type === 'image_url') {
-          // Google Gemini支持inline_data格式的图片
-          const imageUrl = item.image_url?.url || '';
-          // 检查是否是base64图片
-          if (imageUrl.startsWith('data:')) {
-            const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
-            if (matches) {
-              return {
-                inlineData: {
-                  mimeType: matches[1],
-                  data: matches[2],
-                },
-              };
-            }
-          }
-          // URL图片需要先下载，这里暂时忽略
-          return { text: `[Image: ${imageUrl}]` };
-        }
-        return { text: JSON.stringify(item) };
-      });
-    } else {
-      parts = [{ text: JSON.stringify(m.content) }];
-    }
-    
-    return {
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts,
-    };
-  });
-
-  const googleBody = {
-    contents,
-    generationConfig: {
-      temperature: body.temperature,
-      topP: body.top_p,
-      maxOutputTokens: body.max_tokens,
-    },
-  };
+  const googleBody = toGoogleChatBody(body);
 
   const response = await axios.post(url, googleBody, {
     headers: {

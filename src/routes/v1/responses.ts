@@ -6,7 +6,8 @@ import { generateRequestId } from '../../responseBuilder.js';
 import { broadcastRequest } from '../../websocket.js';
 import { getModel, validateApiKey, selectProviderKeyRoundRobin, getProviderById } from '../../storage.js';
 import { getConnectedClientsCount } from '../../websocket.js';
-import { forwardChatRequest, isModelForwardingConfigured } from '../../forwarder.js';
+import { isModelForwardingConfigured } from '../../forwarder.js';
+import { transmuxForward, transmuxForwardStream } from '../../transmux/connect.js';
 import { modelRateLimitMiddleware, recordModelTpmUsage } from '../../middleware.js';
 
 const router: RouterType = Router();
@@ -213,41 +214,69 @@ router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response)
  ? false
  : isModelForwardingConfigured(runtimeModel);
 
- if (hasForwarding) {
- const forwardResult = await forwardChatRequest(runtimeModel, chatRequest);
- if (!forwardResult.success) {
- let errorResponse: any;
- try {
- errorResponse = JSON.parse(forwardResult.error);
- } catch {
- errorResponse = {
- error: {
- message: forwardResult.error,
- type: 'forwarding_error',
- code: 'forwarding_failed',
- },
- };
- }
- return res.status(502).json(errorResponse);
- }
+  if (hasForwarding) {
+  if (isStream) {
+  let forwarded = false;
+  try {
+  forwarded = await transmuxForwardStream({
+  model: runtimeModel,
+  entryVariant: 'responses',
+  body,
+  requestedModel: body.model,
+  stream: true,
+  }, res);
+  } catch (error: any) {
+  console.error('[Responses] 流式转发失败:', error.message);
+  }
+  if (forwarded) return;
+  if (res.headersSent) return;
+  const allowManualReply = modelExists.allowManualReply !== false;
+  if (allowManualReply) {
+  console.log('[Responses] 流式转发失败，但允许人工回复，切换到人工回复模式');
+  } else {
+  return res.status(502).json({
+  error: { message: 'Streaming forward failed: no valid forwarding target', type: 'forwarding_error', code: 'forwarding_failed' },
+  });
+  }
+  }
 
- const content = forwardResult.response?.choices?.[0]?.message?.content || '';
+  // 非流式：transmux 直接输出 Responses 格式
+  const forwardResult = await transmuxForward({
+  model: runtimeModel,
+  entryVariant: 'responses',
+  body: { ...body, stream: false },
+  requestedModel: body.model,
+  stream: false,
+  });
+  if (!forwardResult.success) {
+  const errObj = forwardResult.error?.error ?? forwardResult.error;
+  const errMsg = typeof errObj === 'string' ? errObj : errObj?.message ?? '转发失败';
+  let errorResponse: any;
+  try {
+  errorResponse = typeof forwardResult.error === 'string'
+  ? JSON.parse(forwardResult.error)
+  : forwardResult.error;
+  } catch {
+  errorResponse = {
+  error: {
+  message: errMsg,
+  type: 'forwarding_error',
+  code: 'forwarding_failed',
+  },
+  };
+  }
+  if (modelExists.allowManualReply !== false) {
+  console.log('[Responses] 非流式转发失败，但允许人工回复，切换到人工回复模式');
+  } else {
+  return res.status(502).json(errorResponse);
+  }
+  }
 
- if (isStream) {
- res.setHeader('Content-Type', 'text/event-stream');
- res.setHeader('Cache-Control', 'no-cache');
- res.setHeader('Connection', 'keep-alive');
- res.setHeader('X-Accel-Buffering', 'no');
-
- res.write(`data: ${JSON.stringify(buildResponsesStreamChunk(content))}\n\n`);
- res.write(`data: ${JSON.stringify(buildResponsesStreamDone(requestId))}\n\n`);
- res.write('data: [DONE]\n\n');
- res.end();
- return;
- }
-
- return res.json(buildResponsesApiResponse(content, body.model, requestId));
- }
+  // 转发成功：直接返回 transmux 序列化好的 Responses 格式
+  if (forwardResult.success) {
+  return res.json(forwardResult.response);
+  }
+  }
 
  if (isStream) {
  // 流式响应 - 使用 Responses API 格式

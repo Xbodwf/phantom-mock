@@ -174,7 +174,9 @@ export function ModelCard({ model, onSelect, onPreview }: ModelCardProps) {
               </Typography>
               {model.pricing.tieredPricing.tiers.slice(0, 3).map((tier, index) => (
                 <Typography key={index} variant="caption" color="text.secondary">
-                  {tier.min.toLocaleString()}-{tier.max ? tier.max.toLocaleString() : '∞'}: {formatCurrency(tier.pricePerToken)}/K tokens
+                  {tier.min.toLocaleString()}-{tier.max ? tier.max.toLocaleString() : '∞'}: {tier.pricePerToken !== undefined
+                    ? `${formatCurrency(tier.pricePerToken)}/K tokens`
+                    : `in x${tier.inputMultiplier ?? 1}, out x${tier.outputMultiplier ?? 1}`}
                 </Typography>
               ))}
               {model.pricing.tieredPricing.tiers.length > 3 && (

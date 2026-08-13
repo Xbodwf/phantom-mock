@@ -51,6 +51,69 @@ export interface ChatCompletionResponse {
   };
 }
 
+export type ForwardProtocol = 'openai' | 'anthropic' | 'google' | 'azure' | 'custom';
+
+export type ForwardVariant =
+  | 'chat-completions'
+  | 'responses'
+  | 'messages'
+  | 'generate-content'
+  | 'stream-generate-content'
+  | 'embeddings'
+  | 'rerank'
+  | 'image-generations'
+  | 'image-edits'
+  | 'custom';
+
+/** A model may expose several upstream protocol variants. */
+export interface ModelTarget {
+  id: string;
+  protocol: ForwardProtocol;
+  variant: ForwardVariant;
+  model?: string;
+  path?: string;
+  streamPath?: string;
+  providerId?: string;
+  nodeId?: string;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+  priority?: number;
+}
+
+export interface UnifiedRequest {
+  model: string;
+  messages: Message[];
+  stream: boolean;
+  parameters: Record<string, unknown>;
+  sourceProtocol: ForwardProtocol;
+  sourceVariant: ForwardVariant;
+}
+
+export interface UnifiedUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cacheReadTokens?: number;
+}
+
+export interface UnifiedResponse {
+  id: string;
+  model: string;
+  content: string;
+  role?: string;
+  finishReason?: string | null;
+  toolCalls?: unknown[];
+  usage?: UnifiedUsage;
+}
+
+export interface UnifiedStreamEvent {
+  type: 'start' | 'text' | 'reasoning' | 'tool-call' | 'usage' | 'done' | 'error';
+  text?: string;
+  data?: unknown;
+  usage?: UnifiedUsage;
+  finishReason?: string | null;
+}
+
 export interface ChatCompletionChunk {
   id: string;
   object: 'chat.completion.chunk';
@@ -153,6 +216,7 @@ export interface Model {
   capabilities?: string[];        // 模型能力列表
   
   // 新增字段
+  targets?: ModelTarget[];
   aliases?: string[]; // 模型别名列表
   max_output_tokens?: number; // 最大输出token数
   pricing?: {
@@ -167,7 +231,9 @@ export interface Model {
       tiers: Array<{
         min: number; // 最小token数（包含）
         max: number | null; // 最大token数（包含），null表示无上限
-        pricePerToken: number; // 每token价格（美元）
+        pricePerToken?: number; // 旧版：每token价格
+        inputMultiplier?: number; // 输入价格倍率
+        outputMultiplier?: number; // 输出价格倍率
       }>;
     };
   };

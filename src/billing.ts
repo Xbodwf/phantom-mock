@@ -120,8 +120,27 @@ export function calculateCost(
       }
     }
 
-    const totalTokens = promptTokens + completionTokens;
-    return (totalTokens * (matchedTier.pricePerToken || 0)) / 1000;
+    // 新版阶梯计费分别计算输入和输出，旧版仍支持单一 pricePerToken。
+    const inputMultiplier = matchedTier.inputMultiplier ?? 1;
+    const outputMultiplier = matchedTier.outputMultiplier ?? 1;
+    const unit = model.pricing.unit || 'K';
+    const divisor = unit === 'M' ? 1000000 : 1000;
+    const legacyPrice = matchedTier.pricePerToken;
+
+    if (legacyPrice !== undefined) {
+      const totalTokens = promptTokens + completionTokens;
+      return (totalTokens * legacyPrice) / divisor;
+    }
+
+    const cacheMissTokens = Math.max(0, promptTokens - cacheHitTokens);
+    const inputPrice = model.pricing.input || 0;
+    const cacheReadPrice = model.pricing.cacheRead ?? inputPrice;
+    const outputPrice = model.pricing.output || 0;
+    return (
+      (cacheMissTokens * inputPrice * inputMultiplier +
+        cacheHitTokens * cacheReadPrice * inputMultiplier +
+        completionTokens * outputPrice * outputMultiplier) / divisor
+    );
   }
 
   const unit = model.pricing.unit || 'K';
@@ -170,4 +189,3 @@ export function createUsageRecord(
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
-

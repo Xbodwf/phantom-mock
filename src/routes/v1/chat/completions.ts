@@ -21,7 +21,8 @@ import {
 } from '../../../storage.js';
 import { calculateCost, calculateTokens } from '../../../billing.js';
 import { executeAction } from '../../../actions/executor.js';
-import { forwardChatRequest, forwardStreamRequest, isModelForwardingConfigured } from '../../../forwarder.js';
+import { isModelForwardingConfigured } from '../../../forwarder.js';
+import { transmuxForward, transmuxForwardStream } from '../../../transmux/connect.js';
 import { getContentString, extractApiKey } from '../utils.js';
 import { modelRateLimitMiddleware, recordModelTpmUsage, type AuthRequest } from '../../../middleware.js';
 
@@ -486,33 +487,41 @@ async function handleChatRequest(
  && model.forwardingMode !== 'node'
  && isModelForwardingConfigured(runtimeModel));
 
- if (hasHttpForwarding) {
- console.log(`[Forwarder] HTTP 转发模式：${runtimeModel.api_type || 'openai'} API`);
+  if (hasHttpForwarding) {
+  console.log(`[Forwarder] HTTP 转发模式：${runtimeModel.api_type || 'openai'} API`);
 
- if (isStream) {
- console.log('[Forwarder] 流式转发，直接透传');
+  if (isStream) {
+  console.log('[Forwarder] 流式转发（transmux pipeline）');
 
- try {
- await forwardStreamRequest(runtimeModel, body, res);
- } catch (error: any) {
- console.error('[Forwarder] 流式转发失败:', error.message);
- if (!res.headersSent) {
- const allowManualReply = model.allowManualReply !== false;
- if (allowManualReply) {
- console.log('[Forwarder] 流式转发失败，但允许人工回复，切换到人工回复模式');
- } else {
- return res.status(502).json({
- error: {
- message: `转发失败: ${error.message}`,
- type: 'forwarding_error',
- code: 'forwarding_failed',
- },
- });
- }
- }
- }
- if (res.headersSent) return;
- } else {
+  let forwarded = false;
+  try {
+  forwarded = await transmuxForwardStream({
+  model: runtimeModel,
+  entryVariant: 'chat-completions',
+  body,
+  requestedModel: body.model,
+  stream: true,
+  }, res);
+  } catch (error: any) {
+  console.error('[Forwarder] 流式转发失败:', error.message);
+  }
+
+  if (forwarded) return;
+  // 转发失败或目标不可用：若已开始写流，直接结束
+  if (res.headersSent) return;
+  const allowManualReply = model.allowManualReply !== false;
+  if (allowManualReply) {
+  console.log('[Forwarder] 流式转发失败/未配置，但允许人工回复，切换到人工回复模式');
+  } else {
+  return res.status(502).json({
+  error: {
+  message: '转发失败: no valid forwarding target',
+  type: 'forwarding_error',
+  code: 'forwarding_failed',
+  },
+  });
+  }
+  } else {
  console.log('[Forwarder] 非流式转发，允许用户抢先回复');
 
  const pending: PendingRequest = {
@@ -546,7 +555,13 @@ async function handleChatRequest(
  broadcastRequest(pending);
  }
 
- const forwardPromise = forwardChatRequest(runtimeModel, body);
+ const forwardPromise = transmuxForward({
+ model: runtimeModel,
+ entryVariant: 'chat-completions',
+ body: { ...body, stream: false },
+ requestedModel: body.model,
+ stream: false,
+ });
 
  const raceResult = await Promise.race([
  responsePromise.then(content => ({ type: 'user' as const, content })),
@@ -579,28 +594,32 @@ async function handleChatRequest(
   return res.json(response);
   }
 
- if (!raceResult.result.success) {
- console.log(`[Forwarder] 转发失败: ${raceResult.result.error}`);
+  if (!raceResult.result.success) {
+  const errObj = raceResult.result.error?.error ?? raceResult.result.error;
+  const errMsg = typeof errObj === 'string' ? errObj : errObj?.message ?? '转发失败';
+  console.log(`[Forwarder] 转发失败: ${errMsg}`);
 
- const allowManualReply = model.allowManualReply !== false;
- if (allowManualReply) {
- console.log('[Forwarder] 转发失败，但允许人工回复，切换到人工回复模式');
- } else {
- let errorResponse: any;
- try {
- errorResponse = JSON.parse(raceResult.result.error);
- } catch {
- errorResponse = {
- error: {
- message: raceResult.result.error,
- type: 'forwarding_error',
- code: 'forwarding_failed',
- },
- };
- }
+  const allowManualReply = model.allowManualReply !== false;
+  if (allowManualReply) {
+  console.log('[Forwarder] 转发失败，但允许人工回复，切换到人工回复模式');
+  } else {
+  let errorResponse: any;
+  try {
+  errorResponse = typeof raceResult.result.error === 'string'
+  ? JSON.parse(raceResult.result.error)
+  : raceResult.result.error;
+  } catch {
+  errorResponse = {
+  error: {
+  message: errMsg,
+  type: 'forwarding_error',
+  code: 'forwarding_failed',
+  },
+  };
+  }
 
- return res.status(502).json(errorResponse);
- }
+  return res.status(502).json(errorResponse);
+  }
   } else {
   console.log('[Forwarder] AI 转发成功');
 

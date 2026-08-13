@@ -6,7 +6,8 @@ import { broadcastRequest, getConnectedClientsCount } from '../websocket.js';
 import { hasReverseClients, broadcastRequestToReverseClients } from '../reverseWebSocket.js';
 import { getModel, getUserById, updateUser, createUsageRecord, getAllModels, getNodeById, selectProviderKeyRoundRobin, getProviderById, getSettings } from '../storage.js';
 import { calculateCost, calculateTokens } from '../billing.js';
-import { forwardChatRequest, forwardStreamRequest, isModelForwardingConfigured, shouldUseNodeForwarding, hideKey, resolveForwardUrl, getForwardModelName, getEffectiveApiKey, mergeHeaders, forwardImageRequest } from '../forwarder.js';
+import { isModelForwardingConfigured, shouldUseNodeForwarding, hideKey, resolveForwardUrl, getForwardModelName, getEffectiveApiKey, mergeHeaders } from '../forwarder.js';
+import { transmuxForward, transmuxForwardStream, transmuxImageForward } from '../transmux/connect.js';
 import { sendRequestToNode, isNodeConnected } from '../reverseWebSocket.js';
 
 // 存储流式响应的内容（用于会话自动更新）
@@ -561,7 +562,7 @@ async function handleUserChatRequest(
     const runtimeModel = model as any;
     if (isModelForwardingConfigured(runtimeModel)) {
       try {
-        const result = await forwardImageRequest(runtimeModel, { model: body.model, prompt, n: 1 }, 'imageGenerations');
+        const result = await transmuxImageForward({ model: runtimeModel, entryVariant: 'image-generations', body: { model: body.model, prompt, n: 1 }, requestedModel: body.model });
         if (result.success) {
           const images = result.response?.data || [];
           const imageUrl = images[0]?.url || images[0]?.b64_json || '';
@@ -1085,7 +1086,13 @@ async function handleUserChatRequest(
       } else {
         // 无内置工具 — 直接流式转发
         try {
-          await forwardStreamRequest(runtimeModel, body, res, (info) => {
+          await transmuxForwardStream({
+            model: runtimeModel,
+            entryVariant: 'chat-completions',
+            body,
+            requestedModel: body.model,
+            stream: true,
+          }, res, (info: { content: string; reasoningContent?: string | null }) => {
             if (!streamEnded) {
               if (info.content) streamingContent += info.content;
               if (info.reasoningContent) streamingReasoning += info.reasoningContent || '';
@@ -1160,13 +1167,21 @@ async function handleUserChatRequest(
       let toolRound = 0;
 
       while (toolRound < maxToolRounds) {
-        const forwardResult = await forwardChatRequest(runtimeModel, currentBody);
+        const forwardResult = await transmuxForward({
+          model: runtimeModel,
+          entryVariant: 'chat-completions',
+          body: currentBody,
+          requestedModel: body.model,
+          stream: false,
+        });
 
         if (!forwardResult.success) {
-          console.error('[User Chat] Forwarding failed:', forwardResult.error);
+          const errObj = forwardResult.error?.error ?? forwardResult.error;
+          const errMsg = typeof errObj === 'string' ? errObj : errObj?.message ?? 'Forwarding failed';
+          console.error('[User Chat] Forwarding failed:', errMsg);
           return res.status(502).json({
             error: {
-              message: forwardResult.error,
+              message: errMsg,
               type: 'forwarding_error',
               code: 'forwarding_failed',
             }

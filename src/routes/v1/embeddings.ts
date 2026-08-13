@@ -2,7 +2,8 @@ import { Router, Request, Response } from 'express';
 import type { Model, PendingRequest } from '../../types.js';
 import { getModel, selectProviderKeyRoundRobin, getProviderById, getNodeById } from '../../storage.js';
 import { generateRequestId } from '../../responseBuilder.js';
-import { forwardEmbeddingsRequest, isModelForwardingConfigured, shouldUseNodeForwarding } from '../../forwarder.js';
+import { isModelForwardingConfigured, shouldUseNodeForwarding } from '../../forwarder.js';
+import { transmuxEmbeddingForward } from '../../transmux/connect.js';
 import { addPendingRequest, removePendingRequest } from '../../requestStore.js';
 import { sendRequestToNode, isNodeConnected } from '../../reverseWebSocket.js';
 import { modelRateLimitMiddleware, recordModelTpmUsage } from '../../middleware.js';
@@ -182,26 +183,35 @@ router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response)
  const hasForwarding = (model.forwardingMode === 'provider')
  || (model.forwardingMode !== 'none' && isModelForwardingConfigured(runtimeModel));
 
- if (hasForwarding) {
- const result = await forwardEmbeddingsRequest(runtimeModel, req.body);
- if (!result.success) {
- let errorResponse: any;
- try {
- errorResponse = JSON.parse(result.error);
- } catch {
- errorResponse = {
- error: {
- message: result.error,
- type: 'forwarding_error',
- code: 'forwarding_failed',
- },
- };
- }
- return res.status(502).json(errorResponse);
- }
+  if (hasForwarding) {
+  const result = await transmuxEmbeddingForward({
+  model: runtimeModel,
+  entryVariant: 'embeddings',
+  body: req.body,
+  requestedModel: modelId,
+  });
+  if (!result.success) {
+  const errObj = result.error?.error ?? result.error;
+  const errMsg = typeof errObj === 'string' ? errObj : errObj?.message ?? '转发失败';
+  let errorResponse: any;
+  try {
+  errorResponse = typeof result.error === 'string'
+  ? JSON.parse(result.error)
+  : result.error;
+  } catch {
+  errorResponse = {
+  error: {
+  message: errMsg,
+  type: 'forwarding_error',
+  code: 'forwarding_failed',
+  },
+  };
+  }
+  return res.status(502).json(errorResponse);
+  }
 
- return res.json(result.response);
- }
+  return res.json(result.response);
+  }
 
  res.json({
  object: 'list',

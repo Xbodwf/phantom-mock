@@ -6,6 +6,7 @@ import { generateRequestId } from '../../responseBuilder.js';
 import { broadcastRequest, getConnectedClientsCount } from '../../websocket.js';
 import { getModel, getAllModels, getPublicAndUserActions, validateApiKey, getAllApiKeys, selectProviderKeyRoundRobin, getProviderById } from '../../storage.js';
 import { isModelForwardingConfigured } from '../../forwarder.js';
+import { transmuxForward, transmuxForwardStream, transmuxEmbeddingForward } from '../../transmux/connect.js';
 
 const router: RouterType = Router();
 
@@ -334,34 +335,34 @@ async function handleGeminiRequest(
 
   if (hasForwarding && runtimeModel) {
     // 配置了转发
-    console.log(`[Gemini Forwarder] 转发模式：${runtimeModel.api_type || 'google'} API`);
-
-    // 导入转发函数
-    const { forwardGeminiRequest, forwardGeminiStreamRequest } = await import('../../forwarder.js');
+    console.log(`[Gemini Forwarder] 转发模式（transmux pipeline）：${runtimeModel.api_type || 'google'} API`);
 
     if (isStream) {
       // 流式转发
       console.log('[Gemini Forwarder] 流式转发');
+      let forwarded = false;
       try {
-        await forwardGeminiStreamRequest(runtimeModel, body, res);
+        forwarded = await transmuxForwardStream({
+          model: runtimeModel,
+          entryVariant: 'stream-generate-content',
+          body,
+          requestedModel: modelId,
+          stream: true,
+        }, res);
       } catch (error: any) {
         console.error('[Gemini Forwarder] 流式转发失败:', error.message);
-        if (!res.headersSent) {
-          // 如果允许人工回复，则不返回错误，而是继续等待人工回复
-          const allowManualReply = model?.allowManualReply !== false;
-          if (allowManualReply) {
-            console.log('[Gemini Forwarder] 转发失败，但允许人工回复，切换到人工回复模式');
-            // 继续处理人工回复模式
-          } else {
-            return res.status(502).json({
-              error: { code: 502, message: `转发失败: ${error.message}`, status: 'BAD_GATEWAY' }
-            });
-          }
-        }
       }
-      // 如果转发成功，已经返回了，不会执行到这里
-      // 如果转发失败但允许人工回复，继续执行下面的人工回复逻辑
+      if (forwarded) return;
+      // 转发失败：若已开始写流则结束
       if (res.headersSent) return;
+      // 如果允许人工回复，则不返回错误，而是继续等待人工回复
+      const allowManualReply = model?.allowManualReply !== false;
+      if (!allowManualReply) {
+        return res.status(502).json({
+          error: { code: 502, message: '转发失败: no valid forwarding target', status: 'BAD_GATEWAY' }
+        });
+      }
+      console.log('[Gemini Forwarder] 转发失败，但允许人工回复，切换到人工回复模式');
     } else {
       // 非流式转发，允许用户抢先回复
       console.log('[Gemini Forwarder] 非流式转发，允许用户抢先回复');
@@ -386,8 +387,14 @@ async function handleGeminiRequest(
       addPendingRequest(pending);
       broadcastRequest(pending);
 
-      // 同时发起转发请求
-      const forwardPromise = forwardGeminiRequest(runtimeModel, body);
+      // 同时发起转发请求（transmux）
+      const forwardPromise = transmuxForward({
+        model: runtimeModel,
+        entryVariant: 'generate-content',
+        body,
+        requestedModel: modelId,
+        stream: false,
+      });
 
       // 竞速：用户回复 vs AI 转发
       const raceResult = await Promise.race([
@@ -404,7 +411,8 @@ async function handleGeminiRequest(
       } else {
         // AI 转发先返回
         if (!raceResult.result.success) {
-          console.log(`[Gemini Forwarder] 转发失败: ${raceResult.result.error}`);
+          const errMsg = raceResult.result.error?.error?.message ?? raceResult.result.error;
+          console.log(`[Gemini Forwarder] 转发失败: ${typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg)}`);
           // 如果允许人工回复，则不返回错误，而是继续等待人工回复
           const allowManualReply = model?.allowManualReply !== false;
           if (allowManualReply) {
@@ -412,7 +420,7 @@ async function handleGeminiRequest(
             // 继续执行下面的人工回复逻辑
           } else {
             return res.status(502).json({
-              error: { code: 502, message: raceResult.result.error, status: 'BAD_GATEWAY' }
+              error: { code: 502, message: typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg), status: 'BAD_GATEWAY' }
             });
           }
         } else {
@@ -599,6 +607,29 @@ async function handleGeminiEmbedContent(
     });
   }
 
+  // 尝试转发（模型配置了转发时，embedContent 走 transmux）
+  const runtimeModel = await resolveProviderRuntimeModel(model);
+  if (model.forwardingMode !== 'none' && runtimeModel && isModelForwardingConfigured(runtimeModel)) {
+    console.log(`[Gemini Embedding] 转发模式（transmux pipeline）：${runtimeModel.api_type || 'google'} API`);
+    const result = await transmuxEmbeddingForward({
+      model: runtimeModel,
+      entryVariant: 'embeddings',
+      body: { model: modelId, input: textContent },
+      requestedModel: modelId,
+    });
+    if (result.success) {
+      const openaiData = result.response?.data?.[0];
+      const values = openaiData?.embedding ?? openaiData?.values ?? [];
+      return res.json({ embedding: { values } });
+    }
+    console.error('[Gemini Embedding] 转发失败:', result.error);
+    if (model.allowManualReply === false) {
+      return res.status(502).json({
+        error: { code: 502, message: 'Embedding forward failed', status: 'BAD_GATEWAY' }
+      });
+    }
+  }
+
   console.log('\n========================================');
   console.log('收到新的 embedContent 请求 [Google Gemini]');
   console.log('模型:', modelId);
@@ -705,6 +736,33 @@ async function handleGeminiBatchEmbedContents(
     return res.status(400).json({
       error: { code: 400, message: 'No requests provided', status: 'BAD_REQUEST' }
     });
+  }
+
+  // 尝试转发
+  const runtimeModel = await resolveProviderRuntimeModel(model);
+  if (model.forwardingMode !== 'none' && runtimeModel && isModelForwardingConfigured(runtimeModel)) {
+    console.log(`[Gemini Embedding] batch 转发模式（transmux pipeline）：${runtimeModel.api_type || 'google'} API`);
+    const inputs = requests.map(r =>
+      r.content?.parts?.map((p: any) => p.text || '').filter(Boolean).join('\n') || ''
+    );
+    const result = await transmuxEmbeddingForward({
+      model: runtimeModel,
+      entryVariant: 'embeddings',
+      body: { model: modelId, input: inputs },
+      requestedModel: modelId,
+    });
+    if (result.success) {
+      const embeddings = (result.response?.data ?? []).map((item: any) => ({
+        embedding: { values: item.embedding ?? item.values ?? [] },
+      }));
+      return res.json({ embeddings });
+    }
+    console.error('[Gemini Embedding] batch 转发失败:', result.error);
+    if (model.allowManualReply === false) {
+      return res.status(502).json({
+        error: { code: 502, message: 'Batch embedding forward failed', status: 'BAD_GATEWAY' }
+      });
+    }
   }
 
   console.log('\n========================================');
@@ -833,6 +891,14 @@ router.post('/*', async (req: Request, res: Response) => {
   if (!model) {
     return res.status(404).json({
       error: { code: 404, message: `Model ${modelId} not found`, status: 'NOT_FOUND' }
+    });
+  }
+
+  // Gemini 的 generateContent 端点本身不提供流式语义；流式只能使用
+  // 独立的 streamGenerateContent 端点。
+  if (action === 'generateContent' && (req.body?.stream === true || req.query.stream === 'true')) {
+    return res.status(400).json({
+      error: { code: 400, message: 'generateContent does not support streaming; use streamGenerateContent', status: 'BAD_REQUEST' },
     });
   }
 

@@ -1,21 +1,20 @@
 import { Router, Request, Response } from 'express';
-import axios from 'axios';
 import type { RerankRequest, RerankResponse, Model } from '../../types.js';
 import {
- getModel,
- validateApiKey,
- getUserById,
- updateUser,
- createUsageRecord,
- selectProviderKeyRoundRobin,
- getProviderById,
- getUserByUid,
- getSettings,
+  getModel,
+  validateApiKey,
+  getUserById,
+  updateUser,
+  createUsageRecord,
+  selectProviderKeyRoundRobin,
+  getUserByUid,
+  getSettings,
 } from '../../storage.js';
 import { calculateCost } from '../../billing.js';
 import { generateRequestId } from '../../responseBuilder.js';
 import { extractApiKey } from './utils.js';
-import { standardizeErrorResponse, isModelForwardingConfigured, resolveForwardUrl, getForwardModelName } from '../../forwarder.js';
+import { isModelForwardingConfigured } from '../../forwarder.js';
+import { transmuxRerankForward } from '../../transmux/connect.js';
 import { modelRateLimitMiddleware, recordModelTpmUsage } from '../../middleware.js';
 
 const router: Router = Router();
@@ -200,114 +199,50 @@ router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response)
  const hasForwarding = (model.forwardingMode === 'provider')
  || (model.forwardingMode !== 'none' && isModelForwardingConfigured(runtimeModel));
 
- if (hasForwarding) {
- try {
- // 构建转发请求
- const forwardModel = getForwardModelName(runtimeModel, body.model);
- const url = resolveForwardUrl(runtimeModel, 'rerank', body.model, forwardModel);
+  if (hasForwarding) {
+  const forwardResult = await transmuxRerankForward({
+  model: runtimeModel,
+  entryVariant: 'rerank',
+  body,
+  requestedModel: body.model,
+  });
+  if (!forwardResult.success) {
+  const errObj = forwardResult.error?.error ?? forwardResult.error;
+  const errMsg = typeof errObj === 'string' ? errObj : errObj?.message ?? '转发失败';
+  return res.status(502).json({
+  error: { message: errMsg, type: 'forwarding_error', code: 'forwarding_failed' },
+  });
+  }
 
- const forwardBody = {
- model: forwardModel,
- query: body.query,
- documents: body.documents,
- top_n: body.top_n || body.documents.length,
- return_documents: body.return_documents,
- max_chunks_per_doc: body.max_chunks_per_doc,
- };
+  const rerankResponse = forwardResult.response as RerankResponse;
 
- console.log(`[Forwarder] 转发 Rerank 请求到 ${url}`);
+  //记录使用情况
+  if (userId && apiKeyId) {
+  await recordUsageAndApplyBilling({
+  userId,
+  apiKeyId,
+  model,
+  modelName: body.model,
+  endpoint: 'rerank',
+  promptTokens: rerankResponse.usage.total_tokens,
+  completionTokens:0,
+  totalTokens: rerankResponse.usage.total_tokens,
+  requestId,
+  });
+  }
 
- const response = await axios.post(url, forwardBody, {
- headers: {
- Authorization: `Bearer ${runtimeModel.api_key}`,
- 'Content-Type': 'application/json',
- },
- timeout:60000,
- });
+  return res.json(rerankResponse);
+  }
 
- //统一响应格式
- let rerankResponse: RerankResponse;
-
- if (response.data.results) {
- // 已经是标准格式
- rerankResponse = {
- id: requestId,
- results: response.data.results,
- model: body.model,
- usage: response.data.usage || { total_tokens:0 },
- };
- } else {
- //需要转换格式
- rerankResponse = {
- id: requestId,
- results: response.data.data || response.data,
- model: body.model,
- usage: response.data.usage || { total_tokens:0 },
- };
- }
-
- //记录使用情况
- if (userId && apiKeyId) {
- await recordUsageAndApplyBilling({
- userId,
- apiKeyId,
- model,
- modelName: body.model,
- endpoint: 'rerank',
- promptTokens: rerankResponse.usage.total_tokens,
- completionTokens:0,
- totalTokens: rerankResponse.usage.total_tokens,
- requestId,
- });
- }
-
- return res.json(rerankResponse);
- } catch (error: any) {
- console.error('[Forwarder] Rerank 转发失败:', error.message);
- const standardizedError = standardizeErrorResponse(error, runtimeModel.api_type || 'openai');
- return res.status(502).json(standardizedError);
- }
- }
-
- // 没有配置转发：模拟响应
- console.log('[Manual] Rerank 模拟模式');
-
- //生成模拟的重排序结果
- const topN = body.top_n || body.documents.length;
- const results = body.documents
- .map((doc, index) => ({
- index,
- relevance_score: Math.random() *0.5 +0.5,
- document: body.return_documents ? doc : undefined,
- }))
- .sort((a, b) => b.relevance_score - a.relevance_score)
- .slice(0, topN);
-
- const rerankResponse: RerankResponse = {
- id: requestId,
- results,
- model: body.model,
- usage: {
- total_tokens: body.query.length + body.documents.reduce((sum, doc) => sum + doc.length,0),
- },
- };
-
- //记录使用情况
- if (userId && apiKeyId) {
- await recordUsageAndApplyBilling({
- userId,
- apiKeyId,
- model,
- modelName: body.model,
- endpoint: 'rerank',
- promptTokens: rerankResponse.usage.total_tokens,
- completionTokens:0,
- totalTokens: rerankResponse.usage.total_tokens,
- requestId,
- });
- }
-
- res.json(rerankResponse);
+  // 没有配置转发：返回错误（不再伪造随机分数）
+  console.log('[Rerank] 未配置转发');
+  return res.status(503).json({
+  error: {
+  message: `Model '${body.model}' has no forwarding configured and does not support manual rerank`,
+  type: 'forwarding_error',
+  code: 'no_forwarding',
+  },
+  });
 });
 
 export default router;

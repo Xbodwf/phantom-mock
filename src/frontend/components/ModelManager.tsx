@@ -60,7 +60,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useServer } from '../contexts/ServerContext';
-import type { Model, ModelUpdateParams, Provider, Node } from '../types';
+import type { Model, ModelTarget, ModelUpdateParams, Provider, Node } from '../types';
 import { useTranslation } from 'react-i18next';
 import axios from 'axios';
 
@@ -168,8 +168,12 @@ interface FormData {
   tiered_tiers: Array<{
     min: number;
     max: number | null;
-    pricePerToken: number;
+    pricePerToken?: number;
+    inputMultiplier?: number;
+    outputMultiplier?: number;
   }>;
+  targets?: ModelTarget[];
+  targets_json: string;
   // 转发模式
   forwardingMode: 'provider' | 'node' | 'none';
   providerId: string;
@@ -190,7 +194,7 @@ interface FormData {
   icon: string;
   allowManualReply: boolean;      // 是否允许人工回复
   thinkingModel: boolean;          // 是否启用思考模式
-  thinkingModelType: string;       // 思考模型类型
+  thinkingModelType: 'openai' | 'deepseek' | 'gemini' | 'claude' | ''; // 思考模型类型
   // 新增字段
   rpm: number;
   tpm: number;
@@ -214,6 +218,8 @@ const defaultFormData: FormData = {
   pricing_cache_read: 0,
   tiered_base_on: 'total',
   tiered_tiers: [{ min: 0, max: null, pricePerToken: 0 }],
+  targets: undefined,
+  targets_json: '',
   forwardingMode: 'none',
   providerId: '',
   nodeId: '',
@@ -377,7 +383,9 @@ export default function ModelManager() {
         pricing_per_request: model.pricing?.perRequest || 0,
         pricing_cache_read: model.pricing?.cacheRead || 0,
         tiered_base_on: model.pricing?.tieredPricing?.baseOn || 'total',
-        tiered_tiers: model.pricing?.tieredPricing?.tiers || [{ min: 0, max: null, pricePerToken: 0 }],
+         tiered_tiers: model.pricing?.tieredPricing?.tiers || [{ min: 0, max: null, pricePerToken: 0 }],
+         targets: model.targets,
+         targets_json: model.targets ? JSON.stringify(model.targets, null, 2) : '',
         forwardingMode,
         providerId: model.providerId || '',
         nodeId: model.nodeId || '',
@@ -420,6 +428,18 @@ export default function ModelManager() {
   const handleSave = async () => {
     if (!formData.id.trim()) return;
 
+    let targets: ModelTarget[] | undefined;
+    if (formData.targets_json.trim()) {
+      try {
+        const parsed = JSON.parse(formData.targets_json);
+        if (!Array.isArray(parsed)) throw new Error('targets must be an array');
+        targets = parsed;
+      } catch {
+        window.alert('targets JSON 格式错误');
+        return;
+      }
+    }
+
     // 根据转发模式设置相关字段
     const forwardingMode = formData.forwardingMode;
     const providerId = forwardingMode === 'provider' ? formData.providerId : undefined;
@@ -443,7 +463,9 @@ export default function ModelManager() {
         cacheRead: formData.pricing_cache_read || undefined,
         tieredPricing: formData.pricing_type === 'tiered' ? {
           baseOn: formData.tiered_base_on,
-          tiers: formData.tiered_tiers.filter(tier => tier.pricePerToken > 0),
+           tiers: formData.tiered_tiers.filter(tier =>
+             (tier.pricePerToken || 0) > 0 || (tier.inputMultiplier || 0) > 0 || (tier.outputMultiplier || 0) > 0,
+           ),
         } : undefined,
       } : undefined,
       // 转发配置
@@ -458,13 +480,14 @@ export default function ModelManager() {
       icon: formData.icon || undefined,
       allowManualReply: formData.allowManualReply,
       thinkingModel: formData.thinkingModel || undefined,
-      thinkingModelType: formData.thinkingModelType || undefined,
+       thinkingModelType: (formData.thinkingModelType || undefined) as Model['thinkingModelType'],
       // 新增字段
       rpm: formData.rpm || undefined,
       tpm: formData.tpm || undefined,
       maxConcurrentRequests: formData.maxConcurrentRequests || undefined,
       concurrentQueues: formData.concurrentQueues || undefined,
-      allowOveruse: formData.allowOveruse || undefined,
+       allowOveruse: formData.allowOveruse || undefined,
+       targets,
     };
 
     if (editingModel) {
@@ -546,9 +569,6 @@ export default function ModelManager() {
                     <Chip key="context" size="small" label={`${t('models.manager.contextLength')}: ${formatContextLength(model.context_length)}`} />
                     {model.max_output_tokens && (
                       <Chip key="output" size="small" label={`${t('common.output')}: ${formatContextLength(model.max_output_tokens)}`} />
-                    )}
-                    {model.api_key && (
-                      <Chip key="apikey" size="small" icon={<Key size={14} />} label={t('models.manager.configuredApiKey')} color="success" />
                     )}
                   </Stack>
                 </CardContent>
@@ -781,7 +801,7 @@ export default function ModelManager() {
                 {formData.pricing_type === 'token' ? (
                   <Stack direction="row" spacing={2}>
                     <TextField
-                      label={t('models.manager.inputPrice')}
+                      label={formData.pricing_type === 'tiered' ? '基础输入价格 (每K tokens)' : t('models.manager.inputPrice')}
                       type="number"
                       value={formData.pricing_input}
                       onChange={(e) => setFormData({ ...formData, pricing_input: parseFloat(e.target.value) || 0 })}
@@ -797,7 +817,7 @@ export default function ModelManager() {
                       inputProps={{ min: 0, step: 0.0001 }}
                     />
                     <TextField
-                      label={t('models.manager.outputPrice')}
+                      label={formData.pricing_type === 'tiered' ? '基础输出价格 (每K tokens)' : t('models.manager.outputPrice')}
                       type="number"
                       value={formData.pricing_output}
                       onChange={(e) => setFormData({ ...formData, pricing_output: parseFloat(e.target.value) || 0 })}
@@ -819,6 +839,32 @@ export default function ModelManager() {
                 ) : (
                   // 阶梯计费UI
                   <Stack spacing={2}>
+                    <Stack direction="row" spacing={2}>
+                      <TextField
+                        label="基础输入价格 (每K tokens)"
+                        type="number"
+                        value={formData.pricing_input}
+                        onChange={(e) => setFormData({ ...formData, pricing_input: parseFloat(e.target.value) || 0 })}
+                        size="small"
+                        inputProps={{ min: 0, step: 0.0001 }}
+                      />
+                      <TextField
+                        label={t('models.manager.cacheReadPrice', '输入(缓存命中)')}
+                        type="number"
+                        value={formData.pricing_cache_read}
+                        onChange={(e) => setFormData({ ...formData, pricing_cache_read: parseFloat(e.target.value) || 0 })}
+                        size="small"
+                        inputProps={{ min: 0, step: 0.0001 }}
+                      />
+                      <TextField
+                        label="基础输出价格 (每K tokens)"
+                        type="number"
+                        value={formData.pricing_output}
+                        onChange={(e) => setFormData({ ...formData, pricing_output: parseFloat(e.target.value) || 0 })}
+                        size="small"
+                        inputProps={{ min: 0, step: 0.0001 }}
+                      />
+                    </Stack>
                     <FormControl fullWidth size="small">
                       <InputLabel>{t('models.manager.tieredBaseOn', '阶梯基数')}</InputLabel>
                       <Select
@@ -832,6 +878,9 @@ export default function ModelManager() {
                       </Select>
                     </FormControl>
                     
+                    <Typography variant="body2" color="text.secondary">
+                      基础价格会乘以下面每个阶梯的输入/输出倍率，不能留空或为 0。
+                    </Typography>
                     <Typography variant="body2" color="text.secondary">
                       {t('models.manager.tieredTiers', '阶梯配置')}
                     </Typography>
@@ -878,6 +927,32 @@ export default function ModelManager() {
                           size="small"
                           inputProps={{ min: 0, step: 0.0001 }}
                           sx={{ flex: 1 }}
+                        />
+                        <TextField
+                          label="输入倍率"
+                          type="number"
+                          value={tier.inputMultiplier ?? ''}
+                          onChange={(e) => {
+                            const newTiers = [...formData.tiered_tiers];
+                            newTiers[index].inputMultiplier = e.target.value ? parseFloat(e.target.value) : undefined;
+                            setFormData({ ...formData, tiered_tiers: newTiers });
+                          }}
+                          size="small"
+                          inputProps={{ min: 0, step: 0.1 }}
+                          sx={{ width: '100px' }}
+                        />
+                        <TextField
+                          label="输出倍率"
+                          type="number"
+                          value={tier.outputMultiplier ?? ''}
+                          onChange={(e) => {
+                            const newTiers = [...formData.tiered_tiers];
+                            newTiers[index].outputMultiplier = e.target.value ? parseFloat(e.target.value) : undefined;
+                            setFormData({ ...formData, tiered_tiers: newTiers });
+                          }}
+                          size="small"
+                          inputProps={{ min: 0, step: 0.1 }}
+                          sx={{ width: '100px' }}
                         />
                         {formData.tiered_tiers.length > 1 && (
                           <IconButton
@@ -1044,6 +1119,18 @@ export default function ModelManager() {
                     helperText={t('models.manager.forwardModelNameHelper', '不同平台的模型名称可能不同，可在此指定转发时使用的模型名称')}
                   />
                 )}
+
+                <TextField
+                  label="目标协议端点 JSON"
+                  fullWidth
+                  multiline
+                  minRows={4}
+                  value={formData.targets_json}
+                  onChange={(e) => setFormData({ ...formData, targets_json: e.target.value })}
+                  placeholder={'[{"id":"chat","protocol":"openai","variant":"chat-completions"}]'}
+                  helperText="同一模型可配置多个协议变体；留空则使用旧版转发字段"
+                  size="small"
+                />
                 
                 <FormControlLabel
                   control={

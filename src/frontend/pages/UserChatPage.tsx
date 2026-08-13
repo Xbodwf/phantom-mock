@@ -149,6 +149,8 @@ type ChatSession = {
   isPublic?: boolean;
   ownerId?: string;
   thinking?: boolean;
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'max';
+  thinkingBudgetTokens?: number;
   isOwner?: boolean;
   isReadOnly?: boolean;
 };
@@ -1636,14 +1638,48 @@ export function UserChatPage() {
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id === currentSessionId) {
+            if (thinking) {
+              const selectedModel = models.find(m => m.id === s.model);
+              const modelType = selectedModel?.thinkingModelType || '';
+              const effortDefault = modelType === 'deepseek' ? 'high' : 'medium';
+              return {
+                ...s,
+                thinking: true,
+                reasoningEffort: (s.reasoningEffort || effortDefault) as any,
+                thinkingBudgetTokens: s.thinkingBudgetTokens || 4096,
+                updatedAt: Date.now(),
+              };
+            }
             return { ...s, thinking, updatedAt: Date.now() };
           }
           return s;
         })
       );
     },
-    [currentSessionId]
+    [currentSessionId, models]
   );
+
+  // 当 session 加载时（含从服务器加载的旧会话），初始化思考参数默认值
+  useEffect(() => {
+    if (!currentSession || !currentSession.thinking || !models.length) return;
+    const selectedModel = models.find(m => m.id === currentSession.model);
+    if (!selectedModel?.thinkingModel) return;
+    const modelType = selectedModel.thinkingModelType || '';
+    const needsInit = !currentSession.reasoningEffort || !currentSession.thinkingBudgetTokens;
+    if (!needsInit) return;
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id === currentSessionId && !s.reasoningEffort) {
+          return {
+            ...s,
+            reasoningEffort: (modelType === 'deepseek' ? 'high' : 'medium') as any,
+            thinkingBudgetTokens: s.thinkingBudgetTokens || 4096,
+          };
+        }
+        return s;
+      })
+    );
+  }, [currentSession?.id, currentSession?.thinking, models]);
 
   // 快捷更新超时设置
   const updateCurrentTimeout = useCallback(
@@ -2114,13 +2150,17 @@ export function UserChatPage() {
         }
       }
 
-      const body = {
+      const body: Record<string, any> = {
         model: session.model,
         messages: messagesToSend,
         stream: session.stream,
         sessionId: currentSessionId,
         thinking: session.thinking || false,
       };
+      if (session.thinking) {
+        if (session.reasoningEffort) body.reasoningEffort = session.reasoningEffort;
+        if (session.thinkingBudgetTokens) body.thinkingBudgetTokens = session.thinkingBudgetTokens;
+      }
 
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -3254,23 +3294,82 @@ export function UserChatPage() {
           />
         </Box>
 
-        {/* 思考模式（仅对支持 thinking 的模型显示） */}
+        {/* 思考模式（仅对配置了 thinkingModel 的模型显示） */}
         {(() => {
           const selectedModel = models.find(m => m.id === currentSession?.model);
-          const hasThinking = selectedModel?.supported_features?.includes('thinking');
+          const hasThinking = selectedModel?.thinkingModel === true;
+          const thinkingType = selectedModel?.thinkingModelType || '';
           return hasThinking ? (
-            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-              <Brain size={18} style={{ marginRight: 8 }} />
-              <Typography variant="body2" sx={{ flex: 1 }}>
-                {t('chat.thinking', '思考模式')}
-              </Typography>
-              <Switch
-                size="small"
-                checked={currentSession?.thinking ?? false}
-                onChange={(e) => updateCurrentThinking(e.target.checked)}
-                disabled={isReadOnly}
-              />
-            </Box>
+            <>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                <Brain size={18} style={{ marginRight: 8 }} />
+                <Typography variant="body2" sx={{ flex: 1 }}>
+                  {t('chat.thinking', '思考模式')}
+                </Typography>
+                <Switch
+                  size="small"
+                  checked={currentSession?.thinking ?? false}
+                  onChange={(e) => updateCurrentThinking(e.target.checked)}
+                  disabled={isReadOnly}
+                />
+              </Box>
+              {currentSession?.thinking && (
+                <Box sx={{ pl: 3.5, mb: 1.5 }}>
+                  {(thinkingType === 'openai' || thinkingType === 'deepseek') && (
+                    <FormControl fullWidth size="small">
+                      <InputLabel>{t('chat.thinkingEffort', '思考强度')}</InputLabel>
+                      <Select
+                        value={currentSession?.reasoningEffort || (thinkingType === 'deepseek' ? 'high' : 'medium')}
+                        label={t('chat.thinkingEffort', '思考强度')}
+                        onChange={(e) => {
+                          setSessions(prev => prev.map(s =>
+                            s.id === currentSessionId ? { ...s, reasoningEffort: e.target.value } : s
+                          ));
+                        }}
+                        disabled={isReadOnly}
+                      >
+                        {thinkingType === 'deepseek' ? (
+                          <>
+                            <MenuItem value="high">High (标准思考)</MenuItem>
+                            <MenuItem value="max">Max (极致思考)</MenuItem>
+                          </>
+                        ) : (
+                          <>
+                            <MenuItem value="low">Low (轻度)</MenuItem>
+                            <MenuItem value="medium">Medium (适中)</MenuItem>
+                            <MenuItem value="high">High (深度)</MenuItem>
+                          </>
+                        )}
+                      </Select>
+                    </FormControl>
+                  )}
+                  {thinkingType === 'claude' && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap', minWidth: 60 }}>
+                        {t('chat.thinkingBudget', '思考预算')}
+                      </Typography>
+                      <TextField
+                        type="number"
+                        size="small"
+                        value={currentSession?.thinkingBudgetTokens || 4096}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 1024;
+                          setSessions(prev => prev.map(s =>
+                            s.id === currentSessionId ? { ...s, thinkingBudgetTokens: Math.max(1024, val) } : s
+                          ));
+                        }}
+                        InputProps={{ inputProps: { min: 1024, max: 32000, step: 1024 } }}
+                        sx={{ width: 120 }}
+                        disabled={isReadOnly}
+                      />
+                      <Typography variant="caption" color="text.disabled">
+                        tokens
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
+              )}
+            </>
           ) : null;
         })()}
 

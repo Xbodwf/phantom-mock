@@ -45,9 +45,10 @@ router.post('/', adminMiddleware, async (req: Request, res: Response) => {
     providerId,
     nodeId,
     providerUid,
-    commissionRatio,
-    thinkingModel,
-    thinkingModelType,
+     commissionRatio,
+     thinkingModel,
+     thinkingModelType,
+     targets,
   } = req.body;
 
   console.log('[Model API] POST /api/models - api_url_path:', api_url_path, 'api_url_path_2:', api_url_path_2);
@@ -88,7 +89,8 @@ router.post('/', adminMiddleware, async (req: Request, res: Response) => {
       providerUid,
       commissionRatio,
       thinkingModel,
-      thinkingModelType,
+       thinkingModelType,
+       targets,
     });
     console.log('[Model API] Created model - api_url_path:', newModel.api_url_path);
     broadcastModelsUpdate(getAllModels());
@@ -127,9 +129,10 @@ router.put('/:id(*)', adminMiddleware, async (req: Request, res: Response) => {
     providerId,
     nodeId,
     providerUid,
-    thinkingModel,
-    thinkingModelType,
-    commissionRatio,
+     thinkingModel,
+     thinkingModelType,
+     commissionRatio,
+     targets,
   } = req.body;
 
   console.log('[Model API] PUT /api/models/' + id + ' - api_url_path:', api_url_path, 'api_url_path_2:', api_url_path_2);
@@ -170,7 +173,8 @@ router.put('/:id(*)', adminMiddleware, async (req: Request, res: Response) => {
       providerUid,
       thinkingModel,
       thinkingModelType,
-      commissionRatio,
+       commissionRatio,
+       ...(targets !== undefined ? { targets } : {}),
     });
 
     if (!updated) {

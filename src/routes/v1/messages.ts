@@ -6,37 +6,22 @@ import { generateRequestId } from '../../responseBuilder.js';
 import { broadcastRequest, getConnectedClientsCount } from '../../websocket.js';
 import { hasReverseClients, broadcastRequestToReverseClients } from '../../reverseWebSocket.js';
 import { getModel } from '../../storage.js';
-import { forwardChatRequest, isModelForwardingConfigured } from '../../forwarder.js';
+import { isModelForwardingConfigured } from '../../forwarder.js';
+import { transmuxForward, transmuxForwardStream } from '../../transmux/connect.js';
 import { modelRateLimitMiddleware, recordModelTpmUsage } from '../../middleware.js';
 
 const router: RouterType = Router();
 
 // 辅助函数：获取消息内容的字符串表示
 function getContentString(content: Message['content']): string {
- if (typeof content === 'string') return content;
- if (Array.isArray(content)) {
- return content
- .filter(c => c.type === 'text' && c.text)
- .map(c => c.text)
- .join('\n');
- }
- return '';
-}
-
-function extractAssistantContentFromForwardResponse(response: any): string {
- if (!response) return '';
-
- const content = response?.choices?.[0]?.message?.content;
- if (typeof content === 'string') return content;
-
- if (Array.isArray(content)) {
- return content
- .filter((c: any) => c?.type === 'text' && typeof c?.text === 'string')
- .map((c: any) => c.text)
- .join('\n');
- }
-
- return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+  return content
+  .filter(c => c.type === 'text' && c.text)
+  .map(c => c.text)
+  .join('\n');
+  }
+  return '';
 }
 
 function buildAnthropicResponse(content: string, model: string, requestId: string, outputTokens?: number) {
@@ -163,32 +148,35 @@ router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response)
  user: body.user,
  };
 
- if (isStream) {
- // 检查是否需要转发（流式转发）
- if (hasForwarding && model) {
- console.log('[Forwarder] 流式转发模式：支持的 API 类型');
- try {
- // 导入流式转发函数
- const { forwardStreamRequest } = await import('../../forwarder');
- 
- // 直接转发到 API，不经过本地处理
- await forwardStreamRequest(model, chatRequest, res);
- return;
- } catch (error: any) {
- console.error('[Messages] 流式转发失败:', error.message);
- // 转发失败，返回错误响应
- if (!res.headersSent) {
- return res.status(502).json({
- type: 'error',
- error: {
- type: 'streaming_forward_error',
- message: `Streaming forward failed: ${error.message}`
- }
- });
- }
- return;
- }
- }
+  if (isStream) {
+  // 检查是否需要转发（流式转发）
+  if (hasForwarding && model) {
+  console.log('[Forwarder] 流式转发模式（transmux pipeline）');
+  try {
+  const forwarded = await transmuxForwardStream({
+  model,
+  entryVariant: 'messages',
+  body,
+  requestedModel: body.model,
+  stream: true,
+  }, res);
+  if (forwarded) return;
+  } catch (error: any) {
+  console.error('[Messages] 流式转发失败:', error.message);
+  }
+  // 转发失败或未配置：若已开始写流则结束；否则回退人工回复（下面继续执行）
+  if (res.headersSent) return;
+  if (model.allowManualReply === false) {
+  return res.status(502).json({
+  type: 'error',
+  error: {
+  type: 'streaming_forward_error',
+  message: 'Streaming forward failed: no valid forwarding target'
+  }
+  });
+  }
+  console.log('[Messages] 流式转发失败，但允许人工回复，切换到人工回复模式');
+  }
 
  // Anthropic 流式响应格式（本地处理）
  res.setHeader('Content-Type', 'text/event-stream');
@@ -313,31 +301,32 @@ router.post('/', modelRateLimitMiddleware(), async (req: Request, res: Response)
  });
 
  try {
- if (hasForwarding && model) {
- const raceResult = await Promise.race([
- responsePromise.then((content) => ({ type: 'manual' as const, content })),
- forwardChatRequest(model, { ...chatRequest, stream: false }).then((result) => ({ type: 'forward' as const, result })),
- timeoutPromise,
- ]);
+  if (hasForwarding && model) {
+  const raceResult = await Promise.race([
+  responsePromise.then((content) => ({ type: 'manual' as const, content })),
+  transmuxForward({
+  model,
+  entryVariant: 'messages',
+  body: { ...body, stream: false },
+  requestedModel: body.model,
+  stream: false,
+  }).then((result) => ({ type: 'forward' as const, result })),
+  timeoutPromise,
+  ]);
 
- if (raceResult.type === 'manual') {
- if (timeoutId) clearTimeout(timeoutId);
- removePendingRequest(requestId);
- return res.json(buildAnthropicResponse(raceResult.content, body.model, requestId));
- }
+  if (raceResult.type === 'manual') {
+  if (timeoutId) clearTimeout(timeoutId);
+  removePendingRequest(requestId);
+  return res.json(buildAnthropicResponse(raceResult.content, body.model, requestId));
+  }
 
- if (raceResult.type === 'forward') {
- if (raceResult.result.success) {
- if (timeoutId) clearTimeout(timeoutId);
- removePendingRequest(requestId);
- const content = extractAssistantContentFromForwardResponse(raceResult.result.response);
- return res.json(buildAnthropicResponse(
- content,
- body.model,
- requestId,
- raceResult.result.response?.usage?.completion_tokens,
-));
- }
+  if (raceResult.type === 'forward') {
+  if (raceResult.result.success) {
+  if (timeoutId) clearTimeout(timeoutId);
+  removePendingRequest(requestId);
+  // transmux 已把上游响应转换为 Anthropic 格式
+  return res.json(raceResult.result.response);
+  }
 
  const fallbackResult = await Promise.race([
  responsePromise.then((content) => ({ type: 'manual' as const, content })),

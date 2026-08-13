@@ -21,6 +21,7 @@
     "preview": "tsx src/index.ts",
     "lint": "eslint src/frontend",
     "migrate": "tsx src/scripts/migrate.ts",
+    "migrate:model-targets": "tsx src/scripts/migrate-model-targets.ts",
     "migrate:uids": "tsx src/scripts/migrate-user-uids.ts",
     "seed:admin": "tsx src/scripts/seed-admin.ts"
   },

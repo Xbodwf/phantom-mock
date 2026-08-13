@@ -6,6 +6,7 @@ import { generateRequestId } from '../../responseBuilder.js';
 import { broadcastRequest } from '../../websocket.js';
 import { getModel, validateApiKey, createUsageRecord, getUserById, updateUser } from '../../storage.js';
 import { isModelForwardingConfigured } from '../../forwarder.js';
+import { transmuxImageForward } from '../../transmux/connect.js';
 import { calculateCost, calculateTokens } from '../../billing.js';
 import { modelRateLimitMiddleware, recordModelTpmUsage } from '../../middleware.js';
 import multer from 'multer';
@@ -238,8 +239,12 @@ router.post('/generations', modelRateLimitMiddleware(), async (req: Request, res
   // 转发模式：如果模型配置了转发，直接转发到上游
   const runtimeModel = model as any;
   if (isModelForwardingConfigured(runtimeModel)) {
-    const { forwardImageRequest } = await import('../../forwarder.js');
-    const result = await forwardImageRequest(runtimeModel, body, 'imageGenerations');
+    const result = await transmuxImageForward({
+      model: runtimeModel,
+      entryVariant: 'image-generations',
+      body,
+      requestedModel: body.model,
+    });
     if (result.success) {
       if (userId && apiKeyId) {
         const usage = extractTokenUsage(result.response);
@@ -324,8 +329,13 @@ router.post(['/edits', '/edit'], modelRateLimitMiddleware(), upload.any(), async
   // 转发模式：如果模型配置了转发，直接转发到上游
   const runtimeModel = model as any;
   if (isModelForwardingConfigured(runtimeModel)) {
-    const { forwardImageRequest } = await import('../../forwarder.js');
-    const result = await forwardImageRequest(runtimeModel, body, 'imageEdits', files);
+    const result = await transmuxImageForward({
+      model: runtimeModel,
+      entryVariant: 'image-edits',
+      body,
+      requestedModel: body.model,
+      files,
+    });
     if (result.success) {
       if (userId && apiKeyId) {
         const usage = extractTokenUsage(result.response);

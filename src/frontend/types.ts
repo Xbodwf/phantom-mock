@@ -121,6 +121,7 @@ export interface Model {
   ownerId?: string;               // 归属人ID（用户ID）
   tags?: string[];                // 模型标签
   capabilities?: string[];        // 模型能力列表
+  targets?: ModelTarget[];
 
   aliases?: string[];
   max_output_tokens?: number;
@@ -128,7 +129,17 @@ export interface Model {
     input?: number;
     output?: number;
     unit?: 'K' | 'M';
-    type?: 'token' | 'request';
+     type?: 'token' | 'request' | 'tiered';
+     tieredPricing?: {
+       baseOn: 'total' | 'input' | 'output';
+       tiers: Array<{
+         min: number;
+         max: number | null;
+         pricePerToken?: number;
+         inputMultiplier?: number;
+         outputMultiplier?: number;
+       }>;
+     };
     perRequest?: number;
     cacheRead?: number;
   };
@@ -163,6 +174,20 @@ export interface Model {
     negativeCount?: number;
     averageScore?: number;
   };
+}
+
+export interface ModelTarget {
+  id: string;
+  protocol: 'openai' | 'anthropic' | 'google' | 'azure' | 'custom';
+  variant: string;
+  model?: string;
+  path?: string;
+  streamPath?: string;
+  providerId?: string;
+  nodeId?: string;
+  enabled?: boolean;
+  priority?: number;
+  headers?: Record<string, string>;
 }
 
 // API Key 类型
